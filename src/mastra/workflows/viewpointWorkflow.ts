@@ -6,13 +6,17 @@ import {
   initializeDatabase,
   getPersonas,
   getArticlesNeedingViewpoints,
-  getArticlesNeedingRoundtable,
-  getViewpointsForArticle,
   getTranscriptsForPersona,
   saveViewpoint,
   logAction,
 } from "../db/operations";
-import { buildPersonaPrompt, getIndividualPersonaSlugs } from "../personas";
+import { query } from "../db/schema";
+import {
+  buildPersonaPrompt,
+  buildBriefPrompt,
+  routeToAnalyst,
+  OUTPUT_PERSONAS,
+} from "../personas";
 
 const openai = createOpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
@@ -23,7 +27,7 @@ const openai = createOpenAI({
 const findArticlesStep = createStep({
   id: "find-articles-needing-viewpoints",
   description:
-    "Queries for articles that have summaries but are missing persona viewpoints",
+    "Queries for articles that have summaries but are missing analyst viewpoints",
 
   inputSchema: z.object({}),
 
@@ -66,11 +70,11 @@ const findArticlesStep = createStep({
   },
 });
 
-// Step 2: Generate individual persona viewpoints
+// Step 2: Route each article to best analyst + generate viewpoint
 const generateViewpointsStep = createStep({
-  id: "generate-individual-viewpoints",
+  id: "generate-analyst-viewpoints",
   description:
-    "Generates viewpoints for each article-persona combination using AI with persona-specific prompts",
+    "Routes each article to the best-suited analyst (Bill/Drex/Sarah) and generates their viewpoint",
 
   inputSchema: z.object({
     articles: z.array(z.any()),
@@ -80,71 +84,75 @@ const generateViewpointsStep = createStep({
   }),
 
   outputSchema: z.object({
+    processedArticles: z.array(z.any()),
     viewpointsGenerated: z.number(),
-    articlesProcessed: z.number(),
     errors: z.number(),
     success: z.boolean(),
   }),
 
   execute: async ({ inputData, mastra }) => {
     const logger = mastra?.getLogger();
-    logger?.info("🎙️ [Viewpoint Step 2] Generating individual viewpoints...");
+    logger?.info("🎙️ [Viewpoint Step 2] Generating analyst viewpoints...");
 
     if (!inputData.success || inputData.articles.length === 0) {
       logger?.info("ℹ️ [Viewpoint Step 2] No articles to process");
       return {
+        processedArticles: [],
         viewpointsGenerated: 0,
-        articlesProcessed: 0,
         errors: 0,
         success: true,
       };
     }
 
-    const individualSlugs = getIndividualPersonaSlugs();
     const personaMap = new Map(
-      inputData.personas
-        .filter((p: any) => individualSlugs.includes(p.slug))
-        .map((p: any) => [p.slug, p])
+      inputData.personas.map((p: any) => [p.slug, p])
     );
 
+    const processedArticles: any[] = [];
     let viewpointsGenerated = 0;
-    let articlesProcessed = 0;
     let errors = 0;
 
     for (const article of inputData.articles) {
-      articlesProcessed++;
-      logger?.info(`📝 [Viewpoint Step 2] Processing: ${article.title.slice(0, 60)}...`);
+      const topicTags = article.topic_tags || [];
 
-      for (const slug of individualSlugs) {
-        const persona = personaMap.get(slug) as any;
-        if (!persona) continue;
+      // Route to the best analyst based on article topics
+      const analystSlug = routeToAnalyst(topicTags);
+      const analyst = personaMap.get(analystSlug) as any;
 
+      if (!analyst) {
+        logger?.warn(`⚠️ [Viewpoint Step 2] Analyst not found: ${analystSlug}`);
+        errors++;
+        continue;
+      }
+
+      logger?.info(`📝 [Viewpoint Step 2] Routing "${article.title.slice(0, 50)}..." → ${analyst.name}`);
+
+      try {
+        // Retrieve transcript excerpts for voice authenticity
+        let transcriptExcerpts: string[] = [];
         try {
-          // Retrieve relevant transcript excerpts
-          let transcriptExcerpts: string[] = [];
-          try {
-            const transcripts = await getTranscriptsForPersona(
-              persona.id,
-              article.topic_tags
-            );
-            transcriptExcerpts = transcripts
-              .slice(0, 3)
-              .map((t: any) => {
-                const excerpts = t.processed_excerpts || [];
-                return excerpts
-                  .slice(0, 2)
-                  .map((e: any) => e.quote || e.text || "")
-                  .filter(Boolean)
-                  .join(" ");
-              })
-              .filter(Boolean);
-          } catch {
-            // Transcripts are optional enhancement
-          }
+          const transcripts = await getTranscriptsForPersona(
+            analyst.id,
+            topicTags
+          );
+          transcriptExcerpts = transcripts
+            .slice(0, 3)
+            .map((t: any) => {
+              const excerpts = t.processed_excerpts || [];
+              return excerpts
+                .slice(0, 2)
+                .map((e: any) => e.quote || e.text || "")
+                .filter(Boolean)
+                .join(" ");
+            })
+            .filter(Boolean);
+        } catch {
+          // Transcripts are optional enhancement
+        }
 
-          const systemPrompt = buildPersonaPrompt(slug, transcriptExcerpts);
+        const systemPrompt = buildPersonaPrompt(analystSlug, transcriptExcerpts);
 
-          const userPrompt = `Analyze this healthcare IT article from your unique perspective:
+        const userPrompt = `Analyze this healthcare IT article from your unique perspective:
 
 ARTICLE TITLE: ${article.title}
 
@@ -153,149 +161,12 @@ ARTICLE SUMMARY: ${article.short_summary}
 ARTICLE CONTENT:
 ${(article.raw_content || "").slice(0, 4000)}
 
-TOPIC TAGS: ${(article.topic_tags || []).join(", ")}
-
-Respond with valid JSON only in this exact format:
-{
-  "viewpoint": "Your 3-5 paragraph analysis in your authentic voice. Use first person. Reference your framework and experience.",
-  "keyInsights": ["insight 1", "insight 2", "insight 3"],
-  "confidenceScore": 0.85
-}`;
-
-          const response = await generateText({
-            model: openai("gpt-4o-mini"),
-            system: systemPrompt,
-            prompt: userPrompt,
-            temperature: 0.7,
-          });
-
-          const jsonMatch = response.text.match(/\{[\s\S]*\}/);
-          if (!jsonMatch) {
-            throw new Error("Failed to parse viewpoint response");
-          }
-
-          const result = JSON.parse(jsonMatch[0]);
-
-          await saveViewpoint({
-            articleId: article.id,
-            personaId: persona.id,
-            viewpointText: result.viewpoint,
-            keyInsights: result.keyInsights || [],
-            confidenceScore: result.confidenceScore || 0.8,
-            modelUsed: "gpt-4o-mini",
-          });
-
-          viewpointsGenerated++;
-          logger?.info(`✅ [Viewpoint Step 2] Generated ${slug} viewpoint`, {
-            articleId: article.id,
-          });
-        } catch (error) {
-          errors++;
-          const errorMessage =
-            error instanceof Error ? error.message : String(error);
-          logger?.error(
-            `❌ [Viewpoint Step 2] Failed for ${slug}`,
-            { error: errorMessage, articleId: article.id }
-          );
-        }
-      }
-    }
-
-    logger?.info("✅ [Viewpoint Step 2] Individual viewpoints complete", {
-      viewpointsGenerated,
-      articlesProcessed,
-      errors,
-    });
-
-    return { viewpointsGenerated, articlesProcessed, errors, success: true };
-  },
-});
-
-// Step 3: Generate Newsday roundtable synthesis
-const generateRoundtableStep = createStep({
-  id: "generate-newsday-roundtable",
-  description:
-    "Synthesizes a Newsday-style roundtable discussion using all 3 persona viewpoints",
-
-  inputSchema: z.object({
-    viewpointsGenerated: z.number(),
-    articlesProcessed: z.number(),
-    errors: z.number(),
-    success: z.boolean(),
-  }),
-
-  outputSchema: z.object({
-    roundtablesGenerated: z.number(),
-    totalViewpoints: z.number(),
-    errors: z.number(),
-    success: z.boolean(),
-  }),
-
-  execute: async ({ inputData, mastra }) => {
-    const logger = mastra?.getLogger();
-    logger?.info("🎙️ [Viewpoint Step 3] Generating Newsday roundtables...");
-
-    if (inputData.viewpointsGenerated === 0) {
-      logger?.info("ℹ️ [Viewpoint Step 3] No new viewpoints to synthesize");
-      return {
-        roundtablesGenerated: 0,
-        totalViewpoints: inputData.viewpointsGenerated,
-        errors: 0,
-        success: true,
-      };
-    }
-
-    const personas = await getPersonas();
-    const newsdayPersona = personas.find((p: any) => p.slug === "newsday");
-    if (!newsdayPersona) {
-      logger?.error("❌ [Viewpoint Step 3] Newsday persona not found");
-      return {
-        roundtablesGenerated: 0,
-        totalViewpoints: inputData.viewpointsGenerated,
-        errors: 1,
-        success: false,
-      };
-    }
-
-    const articlesNeedingRoundtable = await getArticlesNeedingRoundtable();
-    let roundtablesGenerated = 0;
-    let errors = 0;
-
-    for (const article of articlesNeedingRoundtable) {
-      try {
-        const viewpoints = await getViewpointsForArticle(article.id);
-
-        const billVp = viewpoints.find(
-          (v: any) => v.persona_slug === "bill-russell"
-        );
-        const drexVp = viewpoints.find(
-          (v: any) => v.persona_slug === "drex-deford"
-        );
-        const sarahVp = viewpoints.find(
-          (v: any) => v.persona_slug === "sarah-richardson"
-        );
-
-        if (!billVp || !drexVp || !sarahVp) continue;
-
-        const systemPrompt = buildPersonaPrompt("newsday");
-
-        const userPrompt = `Generate a Newsday roundtable discussion about this healthcare IT article.
-
-ARTICLE TITLE: ${article.title}
-
-BILL RUSSELL'S PERSPECTIVE:
-${billVp.viewpoint_text}
-
-DREX DEFORD'S PERSPECTIVE:
-${drexVp.viewpoint_text}
-
-SARAH RICHARDSON'S PERSPECTIVE:
-${sarahVp.viewpoint_text}
+TOPIC TAGS: ${topicTags.join(", ")}
 
 Respond with valid JSON only:
 {
-  "viewpoint": "A 4-6 paragraph flowing narrative that weaves all three perspectives together as they would naturally discuss on Newsday.",
-  "keyInsights": ["combined insight 1", "combined insight 2", "combined insight 3"],
+  "viewpoint": "Your 3-5 paragraph analysis in your authentic voice. Use first person. Reference your framework and experience.",
+  "keyInsights": ["insight 1", "insight 2", "insight 3"],
   "confidenceScore": 0.85
 }`;
 
@@ -308,44 +179,191 @@ Respond with valid JSON only:
 
         const jsonMatch = response.text.match(/\{[\s\S]*\}/);
         if (!jsonMatch) {
-          throw new Error("Failed to parse roundtable response");
+          throw new Error("Failed to parse viewpoint response");
         }
 
         const result = JSON.parse(jsonMatch[0]);
 
         await saveViewpoint({
           articleId: article.id,
-          personaId: newsdayPersona.id,
+          personaId: analyst.id,
           viewpointText: result.viewpoint,
           keyInsights: result.keyInsights || [],
-          confidenceScore: result.confidenceScore || 0.85,
+          confidenceScore: result.confidenceScore || 0.8,
           modelUsed: "gpt-4o-mini",
+          generationMetadata: { routedTo: analystSlug, topicTags },
         });
 
-        roundtablesGenerated++;
-        logger?.info("✅ [Viewpoint Step 3] Roundtable generated", {
+        viewpointsGenerated++;
+        processedArticles.push({
+          articleId: article.id,
+          title: article.title,
+          analystSlug,
+          analystName: analyst.name,
+          viewpointText: result.viewpoint,
+          summary: article.short_summary,
+          topicTags,
+        });
+
+        logger?.info(`✅ [Viewpoint Step 2] ${analyst.name} viewpoint generated`, {
           articleId: article.id,
         });
       } catch (error) {
         errors++;
         const errorMessage =
           error instanceof Error ? error.message : String(error);
-        logger?.error("❌ [Viewpoint Step 3] Roundtable failed", {
-          error: errorMessage,
-          articleId: article.id,
-        });
+        logger?.error(
+          `❌ [Viewpoint Step 2] Failed for ${analystSlug}`,
+          { error: errorMessage, articleId: article.id }
+        );
       }
     }
 
-    logger?.info("✅ [Viewpoint Step 3] Roundtable generation complete", {
-      roundtablesGenerated,
+    logger?.info("✅ [Viewpoint Step 2] Analyst viewpoints complete", {
+      viewpointsGenerated,
+      articlesProcessed: processedArticles.length,
+      errors,
+    });
+
+    return { processedArticles, viewpointsGenerated, errors, success: true };
+  },
+});
+
+// Step 3: Generate output persona briefs (CIO, CISO, Sales Rep, General HIT)
+const generateBriefsStep = createStep({
+  id: "generate-persona-briefs",
+  description:
+    "Generates persona-specific briefs (CIO, CISO, Sales Rep, General) from each analyst viewpoint",
+
+  inputSchema: z.object({
+    processedArticles: z.array(z.any()),
+    viewpointsGenerated: z.number(),
+    errors: z.number(),
+    success: z.boolean(),
+  }),
+
+  outputSchema: z.object({
+    briefsGenerated: z.number(),
+    totalViewpoints: z.number(),
+    errors: z.number(),
+    success: z.boolean(),
+  }),
+
+  execute: async ({ inputData, mastra }) => {
+    const logger = mastra?.getLogger();
+    logger?.info("📋 [Viewpoint Step 3] Generating output persona briefs...");
+
+    if (inputData.processedArticles.length === 0) {
+      logger?.info("ℹ️ [Viewpoint Step 3] No viewpoints to brief");
+      return {
+        briefsGenerated: 0,
+        totalViewpoints: inputData.viewpointsGenerated,
+        errors: inputData.errors,
+        success: true,
+      };
+    }
+
+    let briefsGenerated = 0;
+    let errors = inputData.errors;
+    const outputSlugs = Object.keys(OUTPUT_PERSONAS);
+
+    for (const article of inputData.processedArticles) {
+      for (const outputSlug of outputSlugs) {
+        try {
+          const briefPrompt = buildBriefPrompt(
+            outputSlug,
+            article.viewpointText,
+            article.analystName,
+            article.title,
+            article.summary || "",
+            article.topicTags || []
+          );
+
+          const response = await generateText({
+            model: openai("gpt-4o-mini"),
+            prompt: briefPrompt,
+            temperature: 0.5,
+          });
+
+          const jsonMatch = response.text.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) {
+            throw new Error("Failed to parse brief response");
+          }
+
+          const result = JSON.parse(jsonMatch[0]);
+
+          // Store briefs in viewpoints table using a synthetic persona ID approach
+          // We look up or create the output persona record
+          let outputPersonaResult = await query(
+            `SELECT id FROM personas WHERE slug = $1`,
+            [`output-${outputSlug}`]
+          );
+
+          if (outputPersonaResult.rows.length === 0) {
+            const persona = OUTPUT_PERSONAS[outputSlug];
+            outputPersonaResult = await query(
+              `INSERT INTO personas (slug, name, title, background, framework, system_prompt, enabled)
+               VALUES ($1, $2, $3, $4, $5, $6, true)
+               ON CONFLICT (slug) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
+               RETURNING id`,
+              [
+                `output-${outputSlug}`,
+                persona.name,
+                persona.title,
+                persona.description,
+                "Output persona",
+                "Brief generation template",
+              ]
+            );
+          }
+
+          const outputPersonaId = outputPersonaResult.rows[0]?.id;
+          if (outputPersonaId) {
+            await saveViewpoint({
+              articleId: article.articleId,
+              personaId: outputPersonaId,
+              viewpointText: result.brief,
+              keyInsights: [
+                ...(result.keyTakeaways || []),
+                ...(result.actionItems || []).map((a: string) => `ACTION: ${a}`),
+              ],
+              confidenceScore: 0.85,
+              modelUsed: "gpt-4o-mini",
+              generationMetadata: {
+                type: "output-brief",
+                outputPersona: outputSlug,
+                headline: result.headline,
+                relevanceRating: result.relevanceRating,
+                analystSource: article.analystSlug,
+              },
+            });
+            briefsGenerated++;
+          }
+
+          logger?.info(`✅ [Viewpoint Step 3] ${OUTPUT_PERSONAS[outputSlug].name} generated`, {
+            articleId: article.articleId,
+          });
+        } catch (error) {
+          errors++;
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          logger?.error(`❌ [Viewpoint Step 3] Brief failed for ${outputSlug}`, {
+            error: errorMessage,
+            articleId: article.articleId,
+          });
+        }
+      }
+    }
+
+    logger?.info("✅ [Viewpoint Step 3] Briefs complete", {
+      briefsGenerated,
       errors,
     });
 
     return {
-      roundtablesGenerated,
-      totalViewpoints: inputData.viewpointsGenerated + roundtablesGenerated,
-      errors: inputData.errors + errors,
+      briefsGenerated,
+      totalViewpoints: inputData.viewpointsGenerated + briefsGenerated,
+      errors,
       success: true,
     };
   },
@@ -357,7 +375,7 @@ const logViewpointCompletionStep = createStep({
   description: "Logs the viewpoint workflow completion and final statistics",
 
   inputSchema: z.object({
-    roundtablesGenerated: z.number(),
+    briefsGenerated: z.number(),
     totalViewpoints: z.number(),
     errors: z.number(),
     success: z.boolean(),
@@ -366,7 +384,7 @@ const logViewpointCompletionStep = createStep({
   outputSchema: z.object({
     summary: z.string(),
     totalViewpoints: z.number(),
-    roundtablesGenerated: z.number(),
+    briefsGenerated: z.number(),
     errors: z.number(),
     success: z.boolean(),
   }),
@@ -381,20 +399,22 @@ const logViewpointCompletionStep = createStep({
       "success",
       {
         totalViewpoints: inputData.totalViewpoints,
-        roundtablesGenerated: inputData.roundtablesGenerated,
+        briefsGenerated: inputData.briefsGenerated,
         errors: inputData.errors,
         timestamp: new Date().toISOString(),
       }
     );
+
+    const analystCount = inputData.totalViewpoints - inputData.briefsGenerated;
 
     const summary = `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 🎙️ TWH VIEWPOINT AGENT - RUN COMPLETE
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-🗣️ Individual Viewpoints: ${inputData.totalViewpoints - inputData.roundtablesGenerated}
-📺 Newsday Roundtables: ${inputData.roundtablesGenerated}
-📊 Total Viewpoints: ${inputData.totalViewpoints}
+🗣️ Analyst Views (Bill/Drex/Sarah): ${analystCount}
+📋 Output Briefs (CIO/CISO/Sales/General): ${inputData.briefsGenerated}
+📊 Total Generated: ${inputData.totalViewpoints}
 ❌ Errors: ${inputData.errors}
 
 Timestamp: ${new Date().toISOString()}
@@ -406,7 +426,7 @@ Timestamp: ${new Date().toISOString()}
     return {
       summary,
       totalViewpoints: inputData.totalViewpoints,
-      roundtablesGenerated: inputData.roundtablesGenerated,
+      briefsGenerated: inputData.briefsGenerated,
       errors: inputData.errors,
       success: true,
     };
@@ -422,13 +442,13 @@ export const viewpointWorkflow = createWorkflow({
   outputSchema: z.object({
     summary: z.string(),
     totalViewpoints: z.number(),
-    roundtablesGenerated: z.number(),
+    briefsGenerated: z.number(),
     errors: z.number(),
     success: z.boolean(),
   }),
 })
   .then(findArticlesStep as any)
   .then(generateViewpointsStep as any)
-  .then(generateRoundtableStep as any)
+  .then(generateBriefsStep as any)
   .then(logViewpointCompletionStep as any)
   .commit();
