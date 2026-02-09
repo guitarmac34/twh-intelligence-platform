@@ -965,6 +965,156 @@ Respond with valid JSON:
     },
   },
   // ======================================================================
+  // DEMO BRIEF GENERATOR
+  // ======================================================================
+  {
+    path: "/api/briefs/generate",
+    method: "POST" as const,
+    handler: async (c: any) => {
+      const mastra = c.get("mastra");
+      const logger = mastra?.getLogger();
+      const body = await c.req.json();
+
+      logger?.info("📧 [API] Demo brief generation requested", {
+        articleId: body.articleId,
+        personaSlug: body.personaSlug,
+      });
+
+      if (!body.articleId || !body.personaSlug) {
+        return c.json({ error: "Required: articleId, personaSlug" }, 400);
+      }
+
+      try {
+        const openai = createOpenAI({
+          baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+        });
+
+        // Get the article + summary
+        const article = await query(
+          `SELECT a.*, s.short_summary, s.key_takeaways, s.topic_tags, s.relevance_score
+           FROM articles a
+           LEFT JOIN summaries s ON a.id = s.article_id
+           WHERE a.id = $1`,
+          [body.articleId]
+        );
+
+        if (article.rows.length === 0) {
+          return c.json({ error: "Article not found" }, 404);
+        }
+
+        const art = article.rows[0];
+
+        // Get the persona
+        const persona = await query(
+          `SELECT * FROM personas WHERE slug = $1`,
+          [body.personaSlug]
+        );
+
+        if (persona.rows.length === 0) {
+          return c.json({ error: "Persona not found" }, 404);
+        }
+
+        const p = persona.rows[0];
+
+        // Get the viewpoint for this persona (if exists)
+        const viewpoint = await query(
+          `SELECT * FROM viewpoints WHERE article_id = $1 AND persona_id = $2`,
+          [body.articleId, p.id]
+        );
+
+        const vpText = viewpoint.rows[0]?.viewpoint_text || "";
+
+        // Get entities for context
+        const orgs = await query(
+          `SELECT o.canonical_name, o.type FROM organizations o
+           JOIN article_organizations ao ON o.id = ao.organization_id
+           WHERE ao.article_id = $1`,
+          [body.articleId]
+        );
+
+        const briefPrompt = `You are a healthcare IT vendor sales/marketing strategist. Generate a personalized email brief that a sales rep could send to someone who thinks like ${p.name} (${p.title}).
+
+## TARGET PERSONA
+Name: ${p.name}
+Role: ${p.title}
+Background: ${p.background}
+Analytical Framework: "${p.framework}"
+What they care about: ${body.personaSlug === "bill-russell"
+  ? "Strategic CIO decisions, ROI, vendor evaluation, operational stability vs. innovation"
+  : body.personaSlug === "drex-deford"
+  ? "Cybersecurity implications, risk posture, patient safety, zero-trust, threat landscape"
+  : body.personaSlug === "sarah-richardson"
+  ? "Leadership impact, workforce transformation, change management, career development, organizational culture"
+  : "Multi-perspective strategic analysis"}
+
+## ARTICLE CONTEXT
+Title: ${art.title}
+Summary: ${art.short_summary || "N/A"}
+Key Takeaways: ${(art.key_takeaways || []).join("; ")}
+Topics: ${(art.topic_tags || []).join(", ")}
+Organizations Mentioned: ${orgs.rows.map((o: any) => `${o.canonical_name} (${o.type})`).join(", ") || "N/A"}
+
+${vpText ? `## THIS PERSONA'S VIEWPOINT ON THE ARTICLE\n${vpText}` : ""}
+
+## BRIEF REQUIREMENTS
+${body.briefType === "follow-up" ? "This is a follow-up email after an initial meeting." :
+  body.briefType === "cold-outreach" ? "This is a cold outreach email - be concise and value-driven." :
+  "This is a thought-leadership share to stay top-of-mind."}
+
+${body.vendorName ? `The sender works at: ${body.vendorName}` : ""}
+${body.vendorProduct ? `The product/service being positioned: ${body.vendorProduct}` : ""}
+
+Generate the email brief in this JSON format:
+{
+  "subject": "Email subject line (compelling, under 60 chars)",
+  "preview": "Email preview text (first 90 chars shown in inbox)",
+  "body": "The full email body in markdown. Should be 3-4 paragraphs: hook with the news, connect to their framework/priorities, bridge to your value prop (if vendor info provided), close with a specific ask.",
+  "talkingPoints": ["3-5 bullet points the sales rep should know before sending"],
+  "personalizationNotes": "Brief notes on why this approach works for this persona type",
+  "timing": "Suggested timing for sending (e.g., 'Send within 48 hours of article publication')"
+}`;
+
+        const response = await generateText({
+          model: openai("gpt-4o-mini"),
+          prompt: briefPrompt,
+          temperature: 0.6,
+        });
+
+        const jsonMatch = response.text.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          return c.json({ error: "Failed to generate brief" }, 500);
+        }
+
+        const brief = JSON.parse(jsonMatch[0]);
+
+        logger?.info("✅ [API] Demo brief generated", {
+          articleId: body.articleId,
+          personaSlug: body.personaSlug,
+        });
+
+        return c.json({
+          success: true,
+          brief,
+          persona: {
+            name: p.name,
+            title: p.title,
+            slug: p.slug,
+            framework: p.framework,
+          },
+          article: {
+            id: art.id,
+            title: art.title,
+            relevanceScore: art.relevance_score,
+          },
+        });
+      } catch (error: any) {
+        logger?.error("❌ [API] Brief generation failed", { error: error.message });
+        return c.json({ success: false, error: error.message }, 500);
+      }
+    },
+  },
+  // ======================================================================
   // PERSONA & VIEWPOINT ENDPOINTS
   // ======================================================================
   {
