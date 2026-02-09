@@ -1,6 +1,11 @@
 import { query } from "../db/schema";
 import * as fs from "fs";
 import * as path from "path";
+import crypto from "crypto";
+import { createOpenAI } from "@ai-sdk/openai";
+import { generateText } from "ai";
+import { saveArticle, saveEntities, saveSummary, saveViewpoint } from "../db/operations";
+import { buildPersonaPrompt, getIndividualPersonaSlugs } from "../personas";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "OPTIONS" | "HEAD" | "ALL";
 
@@ -369,6 +374,299 @@ export const apiRoutes: Array<{
       } catch (error: any) {
         logger?.error("❌ [API] Trigger failed", { error: error.message });
         return c.json({ success: false, message: error.message }, 500);
+      }
+    },
+  },
+  // ======================================================================
+  // MANUAL ARTICLE SUBMISSION
+  // ======================================================================
+  {
+    path: "/api/articles/submit",
+    method: "POST" as const,
+    handler: async (c: any) => {
+      const mastra = c.get("mastra");
+      const logger = mastra?.getLogger();
+      const body = await c.req.json();
+
+      logger?.info("📝 [API] Manual article submission", { title: body.title, url: body.url });
+
+      // Validate required fields
+      if (!body.title || (!body.content && !body.url)) {
+        return c.json({ error: "Required: title + either content or url" }, 400);
+      }
+
+      try {
+        const openai = createOpenAI({
+          baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+        });
+
+        // If URL provided but no content, try to scrape it
+        let content = body.content || "";
+        if (body.url && !content) {
+          try {
+            const cheerio = await import("cheerio");
+            const response = await fetch(body.url, {
+              headers: { "User-Agent": "TWH-Intelligence-Agent/1.0" },
+            });
+            if (response.ok) {
+              const html = await response.text();
+              const $ = cheerio.load(html);
+              $("script, style, nav, footer, header, aside").remove();
+              content = $("article, main, .content, .post-body, .entry-content, body")
+                .first()
+                .text()
+                .replace(/\s+/g, " ")
+                .trim()
+                .slice(0, 10000);
+            }
+          } catch (scrapeErr) {
+            logger?.warn("⚠️ [API] Could not scrape URL, using provided content", {
+              error: String(scrapeErr),
+            });
+          }
+        }
+
+        if (!content || content.length < 20) {
+          return c.json({ error: "No content available. Provide content directly or a scrapeable URL." }, 400);
+        }
+
+        const contentHash = crypto.createHash("md5").update(content).digest("hex");
+
+        // 1. Save the article
+        const articleId = await saveArticle({
+          url: body.url || `manual://${Date.now()}`,
+          title: body.title,
+          author: body.author || "Manual submission",
+          publishedDate: body.publishedDate || new Date().toISOString(),
+          content,
+          contentHash,
+        });
+
+        logger?.info("💾 [API] Article saved", { articleId });
+
+        // 2. Extract entities
+        let entitiesExtracted = 0;
+        try {
+          const extractResponse = await generateText({
+            model: openai("gpt-4o-mini"),
+            prompt: `Extract entities from this healthcare IT article.
+
+ARTICLE TITLE: ${body.title}
+
+ARTICLE CONTENT:
+${content.slice(0, 4000)}
+
+Extract:
+1. Organizations (health_system, vendor, payer, startup, agency, other)
+2. People (with titles and org affiliations)
+3. Technologies (EHR, cybersecurity, AI, interoperability, analytics, telehealth, cloud, other)
+
+Respond with JSON only:
+{
+  "organizations": [{"name": "...", "type": "vendor", "confidence": 0.9}],
+  "people": [{"name": "...", "title": "...", "organization": "...", "confidence": 0.9}],
+  "technologies": [{"name": "...", "category": "EHR", "vendor": "...", "confidence": 0.9}]
+}`,
+            temperature: 0.2,
+          });
+
+          const jsonMatch = extractResponse.text.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const extracted = JSON.parse(jsonMatch[0]);
+            const orgs = (extracted.organizations || []).map((o: any) => ({
+              canonicalName: o.name,
+              type: o.type,
+              confidence: o.confidence,
+            }));
+            const people = (extracted.people || []).map((p: any) => ({
+              name: p.name,
+              title: p.title,
+              organization: p.organization,
+              confidence: p.confidence,
+            }));
+            const tech = (extracted.technologies || []).map((t: any) => ({
+              canonicalName: t.name,
+              category: t.category,
+              vendor: t.vendor,
+              confidence: t.confidence,
+            }));
+            await saveEntities(articleId, orgs, people, tech);
+            entitiesExtracted = orgs.length + people.length + tech.length;
+          }
+        } catch (e) {
+          logger?.warn("⚠️ [API] Entity extraction failed", { error: String(e) });
+        }
+
+        // 3. Generate summary
+        let summaryData: any = null;
+        try {
+          const summaryResponse = await generateText({
+            model: openai("gpt-4o-mini"),
+            prompt: `Analyze this healthcare IT article:
+
+TITLE: ${body.title}
+CONTENT: ${content.slice(0, 3000)}
+
+Respond in JSON:
+{
+  "summary": "2-3 sentence summary",
+  "takeaways": ["takeaway 1", "takeaway 2", "takeaway 3"],
+  "tags": ["cybersecurity", "AI"],
+  "relevanceScore": 8
+}`,
+            temperature: 0.3,
+          });
+
+          const jsonMatch = summaryResponse.text.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            summaryData = JSON.parse(jsonMatch[0]);
+            await saveSummary(
+              articleId,
+              summaryData.summary,
+              summaryData.takeaways || [],
+              summaryData.tags || [],
+              summaryData.relevanceScore || 5
+            );
+          }
+        } catch (e) {
+          logger?.warn("⚠️ [API] Summary generation failed", { error: String(e) });
+        }
+
+        // 4. Generate persona viewpoints (if relevance >= 6)
+        let viewpointsGenerated = 0;
+        if (summaryData && (summaryData.relevanceScore || 0) >= 6) {
+          const personas = await query(
+            `SELECT * FROM personas WHERE enabled = true AND slug != 'newsday' ORDER BY slug`
+          );
+
+          for (const persona of personas.rows) {
+            try {
+              const systemPrompt = buildPersonaPrompt(persona.slug);
+              const vpResponse = await generateText({
+                model: openai("gpt-4o-mini"),
+                system: systemPrompt,
+                prompt: `Analyze this healthcare IT article from your unique perspective:
+
+ARTICLE TITLE: ${body.title}
+ARTICLE SUMMARY: ${summaryData.summary}
+ARTICLE CONTENT: ${content.slice(0, 4000)}
+TOPIC TAGS: ${(summaryData.tags || []).join(", ")}
+
+Respond with valid JSON only:
+{
+  "viewpoint": "Your 3-5 paragraph analysis in your authentic voice.",
+  "keyInsights": ["insight 1", "insight 2", "insight 3"],
+  "confidenceScore": 0.85
+}`,
+                temperature: 0.7,
+              });
+
+              const vpMatch = vpResponse.text.match(/\{[\s\S]*\}/);
+              if (vpMatch) {
+                const vp = JSON.parse(vpMatch[0]);
+                await saveViewpoint({
+                  articleId,
+                  personaId: persona.id,
+                  viewpointText: vp.viewpoint,
+                  keyInsights: vp.keyInsights || [],
+                  confidenceScore: vp.confidenceScore || 0.8,
+                  modelUsed: "gpt-4o-mini",
+                });
+                viewpointsGenerated++;
+              }
+            } catch (e) {
+              logger?.warn(`⚠️ [API] Viewpoint generation failed for ${persona.slug}`, {
+                error: String(e),
+              });
+            }
+          }
+
+          // Generate Newsday roundtable if all 3 viewpoints exist
+          if (viewpointsGenerated === 3) {
+            try {
+              const viewpoints = await query(
+                `SELECT v.*, p.slug as persona_slug FROM viewpoints v
+                 JOIN personas p ON v.persona_id = p.id
+                 WHERE v.article_id = $1 AND p.slug != 'newsday'`,
+                [articleId]
+              );
+
+              const billVp = viewpoints.rows.find((v: any) => v.persona_slug === "bill-russell");
+              const drexVp = viewpoints.rows.find((v: any) => v.persona_slug === "drex-deford");
+              const sarahVp = viewpoints.rows.find((v: any) => v.persona_slug === "sarah-richardson");
+
+              if (billVp && drexVp && sarahVp) {
+                const newsdayPersona = await query(
+                  `SELECT * FROM personas WHERE slug = 'newsday'`
+                );
+
+                if (newsdayPersona.rows[0]) {
+                  const rtResponse = await generateText({
+                    model: openai("gpt-4o-mini"),
+                    system: buildPersonaPrompt("newsday"),
+                    prompt: `Generate a Newsday roundtable discussion about this article.
+
+ARTICLE TITLE: ${body.title}
+ARTICLE SUMMARY: ${summaryData.summary}
+
+BILL RUSSELL'S PERSPECTIVE: ${billVp.viewpoint_text}
+DREX DEFORD'S PERSPECTIVE: ${drexVp.viewpoint_text}
+SARAH RICHARDSON'S PERSPECTIVE: ${sarahVp.viewpoint_text}
+
+Respond with valid JSON:
+{
+  "viewpoint": "4-6 paragraph narrative weaving all three perspectives.",
+  "keyInsights": ["combined insight 1", "combined insight 2", "combined insight 3"],
+  "confidenceScore": 0.85
+}`,
+                    temperature: 0.7,
+                  });
+
+                  const rtMatch = rtResponse.text.match(/\{[\s\S]*\}/);
+                  if (rtMatch) {
+                    const rt = JSON.parse(rtMatch[0]);
+                    await saveViewpoint({
+                      articleId,
+                      personaId: newsdayPersona.rows[0].id,
+                      viewpointText: rt.viewpoint,
+                      keyInsights: rt.keyInsights || [],
+                      confidenceScore: rt.confidenceScore || 0.85,
+                      modelUsed: "gpt-4o-mini",
+                    });
+                    viewpointsGenerated++;
+                  }
+                }
+              }
+            } catch (e) {
+              logger?.warn("⚠️ [API] Newsday roundtable failed", { error: String(e) });
+            }
+          }
+        }
+
+        logger?.info("✅ [API] Manual article fully processed", {
+          articleId,
+          entitiesExtracted,
+          hasSummary: !!summaryData,
+          viewpointsGenerated,
+        });
+
+        return c.json({
+          success: true,
+          articleId,
+          title: body.title,
+          entitiesExtracted,
+          summary: summaryData?.summary || null,
+          relevanceScore: summaryData?.relevanceScore || null,
+          tags: summaryData?.tags || [],
+          viewpointsGenerated,
+          message: viewpointsGenerated > 0
+            ? `Article processed with ${viewpointsGenerated} persona viewpoints`
+            : "Article processed (viewpoints skipped - relevance below 6)",
+        });
+      } catch (error: any) {
+        logger?.error("❌ [API] Manual submission failed", { error: error.message });
+        return c.json({ success: false, error: error.message }, 500);
       }
     },
   },
