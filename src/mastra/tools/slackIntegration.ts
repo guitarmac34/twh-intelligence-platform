@@ -72,25 +72,23 @@ export async function postViewpointToSlack(
   if (!slack) return;
 
   // Post summary first
-  const summaryBlocks: any[] = [
-    {
-      type: "header",
-      text: { type: "plain_text", text: `📰 ${articleResult.title}`, emoji: true },
-    },
-    {
-      type: "section",
-      text: {
-        type: "mrkdwn",
-        text: `*Summary:* ${articleResult.summary || "N/A"}\n*Relevance:* ${articleResult.relevanceScore || "N/A"}/10\n*Tags:* ${articleResult.tags.join(", ") || "None"}`,
-      },
-    },
-    { type: "divider" },
-  ];
-
   await slack.chat.postMessage({
     channel,
     thread_ts: threadTs,
-    blocks: summaryBlocks,
+    blocks: [
+      {
+        type: "header",
+        text: { type: "plain_text", text: `📰 ${articleResult.title}`, emoji: true },
+      },
+      {
+        type: "section",
+        text: {
+          type: "mrkdwn",
+          text: `*Summary:* ${articleResult.summary || "N/A"}\n*Relevance:* ${articleResult.relevanceScore || "N/A"}/10\n*Tags:* ${articleResult.tags.join(", ") || "None"}`,
+        },
+      },
+      { type: "divider" },
+    ] as any,
     text: `Analysis: ${articleResult.title}`,
   });
 
@@ -130,7 +128,7 @@ export async function postViewpointToSlack(
               },
             ]
           : []),
-      ],
+      ] as any,
       text: `${vp.persona_name}: ${vp.viewpoint_text.slice(0, 100)}...`,
     });
   }
