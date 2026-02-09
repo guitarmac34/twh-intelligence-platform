@@ -4,8 +4,9 @@ import * as path from "path";
 import crypto from "crypto";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText } from "ai";
-import { saveArticle, saveEntities, saveSummary, saveViewpoint } from "../db/operations";
+import { saveArticle, saveEntities, saveSummary, saveViewpoint, getViewpointsForArticle } from "../db/operations";
 import { buildPersonaPrompt, getIndividualPersonaSlugs } from "../personas";
+import { getSlackClient, extractUrlsFromSlackMessage, postViewpointToSlack } from "../tools/slackIntegration";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "OPTIONS" | "HEAD" | "ALL";
 
@@ -375,6 +376,299 @@ export const apiRoutes: Array<{
         logger?.error("❌ [API] Trigger failed", { error: error.message });
         return c.json({ success: false, message: error.message }, 500);
       }
+    },
+  },
+  // ======================================================================
+  // SLACK INTEGRATION
+  // ======================================================================
+  {
+    path: "/api/slack/events",
+    method: "POST" as const,
+    handler: async (c: any) => {
+      const mastra = c.get("mastra");
+      const logger = mastra?.getLogger();
+      const payload = await c.req.json();
+
+      // Handle Slack URL verification challenge
+      if (payload.type === "url_verification") {
+        return c.json({ challenge: payload.challenge });
+      }
+
+      // Only process message events
+      if (payload.type !== "event_callback" || payload.event?.type !== "message") {
+        return c.text("OK", 200);
+      }
+
+      const event = payload.event;
+
+      // Ignore bot messages, message edits, and deletions
+      if (event.bot_id || event.subtype) {
+        return c.text("OK", 200);
+      }
+
+      // Only process from configured channel (if set)
+      const allowedChannel = process.env.SLACK_CHANNEL_ID;
+      if (allowedChannel && event.channel !== allowedChannel) {
+        return c.text("OK", 200);
+      }
+
+      // Extract URLs from the message
+      const urls = extractUrlsFromSlackMessage(event.text || "");
+      if (urls.length === 0) {
+        return c.text("OK", 200);
+      }
+
+      logger?.info("📨 [Slack] Processing shared link", {
+        channel: event.channel,
+        urls,
+        user: event.user,
+      });
+
+      // Acknowledge immediately (Slack requires response within 3s)
+      // Process in background
+      const slack = getSlackClient();
+      if (slack) {
+        // Add a "processing" reaction
+        try {
+          await slack.reactions.add({
+            channel: event.channel,
+            timestamp: event.ts,
+            name: "hourglass_flowing_sand",
+          });
+        } catch {
+          // Reaction may fail if already added
+        }
+      }
+
+      // Process each URL asynchronously (don't block the response)
+      (async () => {
+        const openai = createOpenAI({
+          baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+        });
+
+        for (const url of urls) {
+          try {
+            // Scrape the URL
+            let content = "";
+            let title = "";
+            try {
+              const cheerio = await import("cheerio");
+              const response = await fetch(url, {
+                headers: { "User-Agent": "TWH-Intelligence-Agent/1.0" },
+              });
+              if (response.ok) {
+                const html = await response.text();
+                const $ = cheerio.load(html);
+                title = $("title").text().trim() ||
+                        $("h1").first().text().trim() ||
+                        $('meta[property="og:title"]').attr("content") ||
+                        url;
+                $("script, style, nav, footer, header, aside").remove();
+                content = $("article, main, .content, .post-body, .entry-content, body")
+                  .first()
+                  .text()
+                  .replace(/\s+/g, " ")
+                  .trim()
+                  .slice(0, 10000);
+              }
+            } catch (scrapeErr) {
+              logger?.warn("⚠️ [Slack] Scrape failed", { url, error: String(scrapeErr) });
+              if (slack) {
+                await slack.chat.postMessage({
+                  channel: event.channel,
+                  thread_ts: event.ts,
+                  text: `Could not scrape ${url}: ${String(scrapeErr).slice(0, 100)}`,
+                });
+              }
+              continue;
+            }
+
+            if (!content || content.length < 50) {
+              if (slack) {
+                await slack.chat.postMessage({
+                  channel: event.channel,
+                  thread_ts: event.ts,
+                  text: `Could not extract content from ${url}. Try using /api/articles/submit with the content pasted directly.`,
+                });
+              }
+              continue;
+            }
+
+            const contentHash = crypto.createHash("md5").update(content).digest("hex");
+
+            // Save article
+            const articleId = await saveArticle({
+              url,
+              title,
+              author: "Slack submission",
+              publishedDate: new Date().toISOString(),
+              content,
+              contentHash,
+            });
+
+            // Extract entities
+            try {
+              const extractResponse = await generateText({
+                model: openai("gpt-4o-mini"),
+                prompt: `Extract entities from this healthcare IT article.
+TITLE: ${title}
+CONTENT: ${content.slice(0, 4000)}
+
+Respond with JSON only:
+{"organizations": [{"name": "...", "type": "vendor", "confidence": 0.9}], "people": [{"name": "...", "title": "...", "organization": "...", "confidence": 0.9}], "technologies": [{"name": "...", "category": "EHR", "vendor": "...", "confidence": 0.9}]}`,
+                temperature: 0.2,
+              });
+              const jsonMatch = extractResponse.text.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                const extracted = JSON.parse(jsonMatch[0]);
+                await saveEntities(
+                  articleId,
+                  (extracted.organizations || []).map((o: any) => ({ canonicalName: o.name, type: o.type, confidence: o.confidence })),
+                  extracted.people || [],
+                  (extracted.technologies || []).map((t: any) => ({ canonicalName: t.name, category: t.category, vendor: t.vendor, confidence: t.confidence }))
+                );
+              }
+            } catch { /* entity extraction is optional */ }
+
+            // Generate summary
+            let summaryData: any = null;
+            try {
+              const summaryResponse = await generateText({
+                model: openai("gpt-4o-mini"),
+                prompt: `Analyze this healthcare IT article:
+TITLE: ${title}
+CONTENT: ${content.slice(0, 3000)}
+
+Respond in JSON:
+{"summary": "2-3 sentence summary", "takeaways": ["takeaway 1", "takeaway 2"], "tags": ["cybersecurity", "AI"], "relevanceScore": 8}`,
+                temperature: 0.3,
+              });
+              const jsonMatch = summaryResponse.text.match(/\{[\s\S]*\}/);
+              if (jsonMatch) {
+                summaryData = JSON.parse(jsonMatch[0]);
+                await saveSummary(articleId, summaryData.summary, summaryData.takeaways || [], summaryData.tags || [], summaryData.relevanceScore || 5);
+              }
+            } catch { /* summary is optional */ }
+
+            // Generate viewpoints
+            let viewpointsGenerated = 0;
+            if (summaryData) {
+              const personas = await query(
+                `SELECT * FROM personas WHERE enabled = true AND slug != 'newsday' ORDER BY slug`
+              );
+
+              for (const persona of personas.rows) {
+                try {
+                  const systemPrompt = buildPersonaPrompt(persona.slug);
+                  const vpResponse = await generateText({
+                    model: openai("gpt-4o-mini"),
+                    system: systemPrompt,
+                    prompt: `Analyze this healthcare IT article from your unique perspective:
+ARTICLE TITLE: ${title}
+ARTICLE SUMMARY: ${summaryData.summary}
+ARTICLE CONTENT: ${content.slice(0, 4000)}
+TOPIC TAGS: ${(summaryData.tags || []).join(", ")}
+
+Respond with valid JSON only:
+{"viewpoint": "Your 3-5 paragraph analysis in your authentic voice.", "keyInsights": ["insight 1", "insight 2", "insight 3"], "confidenceScore": 0.85}`,
+                    temperature: 0.7,
+                  });
+                  const vpMatch = vpResponse.text.match(/\{[\s\S]*\}/);
+                  if (vpMatch) {
+                    const vp = JSON.parse(vpMatch[0]);
+                    await saveViewpoint({
+                      articleId,
+                      personaId: persona.id,
+                      viewpointText: vp.viewpoint,
+                      keyInsights: vp.keyInsights || [],
+                      confidenceScore: vp.confidenceScore || 0.8,
+                      modelUsed: "gpt-4o-mini",
+                    });
+                    viewpointsGenerated++;
+                  }
+                } catch { /* individual viewpoint failure is ok */ }
+              }
+
+              // Newsday roundtable
+              if (viewpointsGenerated === 3) {
+                try {
+                  const allVps = await getViewpointsForArticle(articleId);
+                  const billVp = allVps.find((v: any) => v.persona_slug === "bill-russell");
+                  const drexVp = allVps.find((v: any) => v.persona_slug === "drex-deford");
+                  const sarahVp = allVps.find((v: any) => v.persona_slug === "sarah-richardson");
+                  const newsdayPersona = await query(`SELECT * FROM personas WHERE slug = 'newsday'`);
+
+                  if (billVp && drexVp && sarahVp && newsdayPersona.rows[0]) {
+                    const rtResponse = await generateText({
+                      model: openai("gpt-4o-mini"),
+                      system: buildPersonaPrompt("newsday"),
+                      prompt: `Generate a Newsday roundtable discussion.
+ARTICLE TITLE: ${title}
+BILL: ${billVp.viewpoint_text}
+DREX: ${drexVp.viewpoint_text}
+SARAH: ${sarahVp.viewpoint_text}
+
+Respond with JSON: {"viewpoint": "4-6 paragraph narrative.", "keyInsights": ["insight 1", "insight 2"], "confidenceScore": 0.85}`,
+                      temperature: 0.7,
+                    });
+                    const rtMatch = rtResponse.text.match(/\{[\s\S]*\}/);
+                    if (rtMatch) {
+                      const rt = JSON.parse(rtMatch[0]);
+                      await saveViewpoint({
+                        articleId,
+                        personaId: newsdayPersona.rows[0].id,
+                        viewpointText: rt.viewpoint,
+                        keyInsights: rt.keyInsights || [],
+                        confidenceScore: rt.confidenceScore || 0.85,
+                        modelUsed: "gpt-4o-mini",
+                      });
+                      viewpointsGenerated++;
+                    }
+                  }
+                } catch { /* roundtable failure is ok */ }
+              }
+            }
+
+            // Post results back to Slack
+            if (slack) {
+              const viewpoints = await getViewpointsForArticle(articleId);
+              await postViewpointToSlack(
+                event.channel,
+                event.ts,
+                {
+                  title,
+                  articleId,
+                  summary: summaryData?.summary || null,
+                  relevanceScore: summaryData?.relevanceScore || null,
+                  tags: summaryData?.tags || [],
+                  viewpointsGenerated,
+                },
+                viewpoints
+              );
+
+              // Remove processing reaction, add checkmark
+              try {
+                await slack.reactions.remove({ channel: event.channel, timestamp: event.ts, name: "hourglass_flowing_sand" });
+                await slack.reactions.add({ channel: event.channel, timestamp: event.ts, name: "white_check_mark" });
+              } catch { /* reactions are best-effort */ }
+            }
+
+            logger?.info("✅ [Slack] Article processed from link share", { articleId, url, viewpointsGenerated });
+          } catch (err) {
+            logger?.error("❌ [Slack] Failed to process URL", { url, error: String(err) });
+            if (slack) {
+              try {
+                await slack.reactions.remove({ channel: event.channel, timestamp: event.ts, name: "hourglass_flowing_sand" });
+                await slack.reactions.add({ channel: event.channel, timestamp: event.ts, name: "x" });
+              } catch { /* best-effort */ }
+            }
+          }
+        }
+      })();
+
+      // Return immediately to Slack
+      return c.text("OK", 200);
     },
   },
   // ======================================================================
