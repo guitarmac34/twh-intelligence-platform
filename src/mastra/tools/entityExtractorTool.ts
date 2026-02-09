@@ -15,7 +15,9 @@ export const entityExtractorTool = createTool({
 
   inputSchema: z.object({
     title: z.string().describe("The article title"),
-    content: z.string().describe("The article content to extract entities from"),
+    content: z
+      .string()
+      .describe("The article content to extract entities from"),
     articleUrl: z.string().describe("The article URL for reference"),
   }),
 
@@ -23,9 +25,16 @@ export const entityExtractorTool = createTool({
     organizations: z.array(
       z.object({
         name: z.string(),
-        type: z.enum(["health_system", "vendor", "payer", "startup", "agency", "other"]),
+        type: z.enum([
+          "health_system",
+          "vendor",
+          "payer",
+          "startup",
+          "agency",
+          "other",
+        ]),
         confidence: z.number(),
-      })
+      }),
     ),
     people: z.array(
       z.object({
@@ -33,15 +42,24 @@ export const entityExtractorTool = createTool({
         title: z.string().optional(),
         organization: z.string().optional(),
         confidence: z.number(),
-      })
+      }),
     ),
     technologies: z.array(
       z.object({
         name: z.string(),
-        category: z.enum(["EHR", "cybersecurity", "AI", "interoperability", "analytics", "telehealth", "cloud", "other"]),
+        category: z.enum([
+          "EHR",
+          "cybersecurity",
+          "AI",
+          "interoperability",
+          "analytics",
+          "telehealth",
+          "cloud",
+          "other",
+        ]),
         vendor: z.string().optional(),
         confidence: z.number(),
-      })
+      }),
     ),
     success: z.boolean(),
     error: z.string().optional(),
@@ -117,8 +135,11 @@ Respond with valid JSON only in this exact format:
         success: true,
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger?.error("❌ [entityExtractorTool] Extraction failed", { error: errorMessage });
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      logger?.error("❌ [entityExtractorTool] Extraction failed", {
+        error: errorMessage,
+      });
 
       return {
         organizations: [],

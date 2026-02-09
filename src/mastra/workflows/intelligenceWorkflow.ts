@@ -22,7 +22,7 @@ const openai = createOpenAI({
 
 // Canonical dictionaries for entity normalization
 const ORGANIZATION_ALIASES: Record<string, string> = {
-  "cerner": "Oracle Health",
+  cerner: "Oracle Health",
   "cerner corporation": "Oracle Health",
   "oracle cerner": "Oracle Health",
   "epic systems": "Epic",
@@ -44,7 +44,8 @@ const TECHNOLOGY_ALIASES: Record<string, string> = {
 // Step 1: Initialize database and load sources
 const loadSourcesStep = createStep({
   id: "load-sources",
-  description: "Initializes database and loads the list of enabled news sources to monitor",
+  description:
+    "Initializes database and loads the list of enabled news sources to monitor",
 
   inputSchema: z.object({}),
 
@@ -61,12 +62,9 @@ const loadSourcesStep = createStep({
     try {
       await initializeDatabase();
 
-      await logAction(
-        "TWH Intelligence Agent",
-        "workflow_started",
-        "started",
-        { timestamp: new Date().toISOString() }
-      );
+      await logAction("TWH Intelligence Agent", "workflow_started", "started", {
+        timestamp: new Date().toISOString(),
+      });
 
       const sources = await getSources();
 
@@ -74,8 +72,11 @@ const loadSourcesStep = createStep({
 
       return { sources, success: true };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger?.error("❌ [Step 1] Failed to load sources", { error: errorMessage });
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      logger?.error("❌ [Step 1] Failed to load sources", {
+        error: errorMessage,
+      });
       return { sources: [], success: false, error: errorMessage };
     }
   },
@@ -84,7 +85,8 @@ const loadSourcesStep = createStep({
 // Step 2: Monitor sources and scrape new content
 const monitorSourcesStep = createStep({
   id: "monitor-sources",
-  description: "Scrapes content from all enabled sources and collects new articles",
+  description:
+    "Scrapes content from all enabled sources and collects new articles",
 
   inputSchema: z.object({
     sources: z.array(z.any()),
@@ -121,11 +123,11 @@ const monitorSourcesStep = createStep({
         logger?.info(`📡 [Step 2] Scraping source: ${source.name}`);
 
         let articles: any[] = [];
-        
-        if (source.type === "rss" && source.rss_url) {
+
+        if (source.source_type === "rss" && source.rss_url) {
           articles = await scrapeRssFeed(source.rss_url, 10);
         } else {
-          articles = await scrapeHtmlPage(source.url, source.scrape_selector, 10);
+          articles = await scrapeHtmlPage(source.url, source.selector, 10);
         }
 
         if (articles.length > 0) {
@@ -135,13 +137,18 @@ const monitorSourcesStep = createStep({
           }));
           allArticles.push(...articlesWithSource);
           sourcesProcessed++;
-          logger?.info(`✅ [Step 2] Scraped ${articles.length} articles from ${source.name}`);
+          logger?.info(
+            `✅ [Step 2] Scraped ${articles.length} articles from ${source.name}`,
+          );
         } else {
           logger?.warn(`⚠️ [Step 2] No articles from ${source.name}`);
         }
       } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        logger?.error(`❌ [Step 2] Error scraping ${source.name}`, { error: errorMessage });
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
+        logger?.error(`❌ [Step 2] Error scraping ${source.name}`, {
+          error: errorMessage,
+        });
       }
     }
 
@@ -161,7 +168,8 @@ const monitorSourcesStep = createStep({
 // Step 3: Filter out duplicate/already processed content
 const filterContentStep = createStep({
   id: "filter-content",
-  description: "Filters out articles that have already been processed or are duplicates",
+  description:
+    "Filters out articles that have already been processed or are duplicates",
 
   inputSchema: z.object({
     articles: z.array(z.any()),
@@ -188,7 +196,10 @@ const filterContentStep = createStep({
     let duplicatesSkipped = 0;
 
     for (const article of inputData.articles) {
-      const checkResult = await checkArticleExists(article.contentHash, article.url);
+      const checkResult = await checkArticleExists(
+        article.contentHash,
+        article.url,
+      );
 
       if (!checkResult.exists) {
         newArticles.push(article);
@@ -213,7 +224,8 @@ const filterContentStep = createStep({
 // Step 4: Process articles - extract entities and generate summaries
 const processArticlesStep = createStep({
   id: "process-articles",
-  description: "Processes each new article: extracts entities, normalizes them, and generates AI summaries",
+  description:
+    "Processes each new article: extracts entities, normalizes them, and generates AI summaries",
 
   inputSchema: z.object({
     newArticles: z.array(z.any()),
@@ -234,7 +246,12 @@ const processArticlesStep = createStep({
 
     if (inputData.newArticles.length === 0) {
       logger?.info("ℹ️ [Step 4] No new articles to process");
-      return { processedArticles: [], success: true, totalProcessed: 0, errors: 0 };
+      return {
+        processedArticles: [],
+        success: true,
+        totalProcessed: 0,
+        errors: 0,
+      };
     }
 
     const processedArticles: any[] = [];
@@ -242,7 +259,9 @@ const processArticlesStep = createStep({
 
     for (const article of inputData.newArticles) {
       try {
-        logger?.info(`📝 [Step 4] Processing: ${article.title.slice(0, 50)}...`);
+        logger?.info(
+          `📝 [Step 4] Processing: ${article.title.slice(0, 50)}...`,
+        );
 
         // 1. Save the article first
         const articleId = await saveArticle({
@@ -288,47 +307,64 @@ Respond with JSON only:
             const extracted = JSON.parse(jsonMatch[0]);
 
             // Normalize entities
-            const normalizedOrgs = (extracted.organizations || []).map((org: any) => {
-              const lowerName = org.name.toLowerCase().trim();
-              const canonical = ORGANIZATION_ALIASES[lowerName];
-              return {
-                canonicalName: canonical || org.name,
-                type: org.type,
-                confidence: org.confidence,
-              };
-            });
+            const normalizedOrgs = (extracted.organizations || []).map(
+              (org: any) => {
+                const lowerName = org.name.toLowerCase().trim();
+                const canonical = ORGANIZATION_ALIASES[lowerName];
+                return {
+                  canonicalName: canonical || org.name,
+                  type: org.type,
+                  confidence: org.confidence,
+                };
+              },
+            );
 
-            const normalizedPeople = (extracted.people || []).map((person: any) => {
-              let normalizedOrg = person.organization;
-              if (normalizedOrg) {
-                const lowerOrg = normalizedOrg.toLowerCase().trim();
-                normalizedOrg = ORGANIZATION_ALIASES[lowerOrg] || normalizedOrg;
-              }
-              return {
-                name: person.name,
-                title: person.title,
-                organization: normalizedOrg,
-                confidence: person.confidence,
-              };
-            });
+            const normalizedPeople = (extracted.people || []).map(
+              (person: any) => {
+                let normalizedOrg = person.organization;
+                if (normalizedOrg) {
+                  const lowerOrg = normalizedOrg.toLowerCase().trim();
+                  normalizedOrg =
+                    ORGANIZATION_ALIASES[lowerOrg] || normalizedOrg;
+                }
+                return {
+                  name: person.name,
+                  title: person.title,
+                  organization: normalizedOrg,
+                  confidence: person.confidence,
+                };
+              },
+            );
 
-            const normalizedTech = (extracted.technologies || []).map((tech: any) => {
-              const lowerName = tech.name.toLowerCase().trim();
-              const canonical = TECHNOLOGY_ALIASES[lowerName];
-              return {
-                canonicalName: canonical || tech.name,
-                category: tech.category,
-                vendor: tech.vendor,
-                confidence: tech.confidence,
-              };
-            });
+            const normalizedTech = (extracted.technologies || []).map(
+              (tech: any) => {
+                const lowerName = tech.name.toLowerCase().trim();
+                const canonical = TECHNOLOGY_ALIASES[lowerName];
+                return {
+                  canonicalName: canonical || tech.name,
+                  category: tech.category,
+                  vendor: tech.vendor,
+                  confidence: tech.confidence,
+                };
+              },
+            );
 
             // Save entities
-            await saveEntities(articleId, normalizedOrgs, normalizedPeople, normalizedTech);
-            entitiesExtracted = normalizedOrgs.length + normalizedPeople.length + normalizedTech.length;
+            await saveEntities(
+              articleId,
+              normalizedOrgs,
+              normalizedPeople,
+              normalizedTech,
+            );
+            entitiesExtracted =
+              normalizedOrgs.length +
+              normalizedPeople.length +
+              normalizedTech.length;
           }
         } catch (e) {
-          logger?.warn("⚠️ [Step 4] Entity extraction failed", { error: String(e) });
+          logger?.warn("⚠️ [Step 4] Entity extraction failed", {
+            error: String(e),
+          });
         }
 
         // 3. Generate summary using the agent
@@ -366,12 +402,14 @@ Respond in this exact JSON format:
               summaryData.summary,
               summaryData.takeaways || [],
               summaryData.tags || [],
-              summaryData.relevanceScore || 5
+              summaryData.relevanceScore || 5,
             );
             hasSummary = true;
           }
         } catch (e) {
-          logger?.warn("⚠️ [Step 4] Summary generation failed", { error: String(e) });
+          logger?.warn("⚠️ [Step 4] Summary generation failed", {
+            error: String(e),
+          });
         }
 
         processedArticles.push({
@@ -388,7 +426,8 @@ Respond in this exact JSON format:
         });
       } catch (error) {
         errors++;
-        const errorMessage = error instanceof Error ? error.message : String(error);
+        const errorMessage =
+          error instanceof Error ? error.message : String(error);
         logger?.error(`❌ [Step 4] Error processing article`, {
           title: article.title,
           error: errorMessage,
@@ -437,22 +476,19 @@ const storeResultsStep = createStep({
 
     const totalEntities = inputData.processedArticles.reduce(
       (sum: number, a: any) => sum + (a.entitiesExtracted || 0),
-      0
+      0,
     );
-    const totalSummaries = inputData.processedArticles.filter((a: any) => a.hasSummary).length;
+    const totalSummaries = inputData.processedArticles.filter(
+      (a: any) => a.hasSummary,
+    ).length;
 
-    await logAction(
-      "TWH Intelligence Agent",
-      "workflow_completed",
-      "success",
-      {
-        articlesProcessed: inputData.totalProcessed,
-        entitiesExtracted: totalEntities,
-        summariesGenerated: totalSummaries,
-        errors: inputData.errors,
-        timestamp: new Date().toISOString(),
-      }
-    );
+    await logAction("TWH Intelligence Agent", "workflow_completed", "success", {
+      articlesProcessed: inputData.totalProcessed,
+      entitiesExtracted: totalEntities,
+      summariesGenerated: totalSummaries,
+      errors: inputData.errors,
+      timestamp: new Date().toISOString(),
+    });
 
     const summary = `
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

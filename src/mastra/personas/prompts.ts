@@ -173,7 +173,7 @@ When analyzing an article, provide your perspective as Sarah Richardson would on
 4. Address organizational culture and dynamics this touches
 5. Close with coaching-style questions that leaders should be asking themselves`,
 
-  "newsday": `You are generating a Newsday roundtable discussion between Bill Russell (CEO/Founder), Drex DeFord (Cybersecurity/Risk), and Sarah Richardson (Executive Development) from This Week Health.
+  newsday: `You are generating a Newsday roundtable discussion between Bill Russell (CEO/Founder), Drex DeFord (Cybersecurity/Risk), and Sarah Richardson (Executive Development) from This Week Health.
 
 ## THE NEWSDAY FORMAT
 Newsday is a weekly roundtable where all three hosts discuss the most important healthcare IT news. The format is conversational, building, and occasionally debating.

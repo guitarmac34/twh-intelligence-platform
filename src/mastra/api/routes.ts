@@ -4,26 +4,88 @@ import * as path from "path";
 import crypto from "crypto";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText } from "ai";
-import { saveArticle, saveEntities, saveSummary, saveViewpoint, getViewpointsForArticle } from "../db/operations";
+import {
+  saveArticle,
+  saveEntities,
+  saveSummary,
+  saveViewpoint,
+  getViewpointsForArticle,
+} from "../db/operations";
 import { buildPersonaPrompt, getIndividualPersonaSlugs } from "../personas";
-import { getSlackClient, extractUrlsFromSlackMessage, postViewpointToSlack } from "../tools/slackIntegration";
+import {
+  getSlackClient,
+  extractUrlsFromSlackMessage,
+  postViewpointToSlack,
+} from "../tools/slackIntegration";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "ALL";
 
 const SOURCE_FILES = [
-  { name: "intelligenceWorkflow.ts", path: "src/mastra/workflows/intelligenceWorkflow.ts", description: "Main workflow with 5-step process" },
-  { name: "viewpointWorkflow.ts", path: "src/mastra/workflows/viewpointWorkflow.ts", description: "Persona viewpoint generation workflow" },
-  { name: "researcherAgent.ts", path: "src/mastra/agents/researcherAgent.ts", description: "AI agent with healthcare IT expertise" },
-  { name: "webScraperTool.ts", path: "src/mastra/tools/webScraperTool.ts", description: "RSS and HTML scraping logic" },
-  { name: "entityExtractorTool.ts", path: "src/mastra/tools/entityExtractorTool.ts", description: "AI-powered entity extraction" },
-  { name: "entityNormalizerTool.ts", path: "src/mastra/tools/entityNormalizerTool.ts", description: "Canonical name normalization" },
-  { name: "viewpointGeneratorTool.ts", path: "src/mastra/tools/viewpointGeneratorTool.ts", description: "Persona viewpoint generation" },
-  { name: "transcriptIngestionTool.ts", path: "src/mastra/tools/transcriptIngestionTool.ts", description: "YouTube transcript fetching" },
-  { name: "databaseTool.ts", path: "src/mastra/tools/databaseTool.ts", description: "Database operations tool" },
-  { name: "prompts.ts", path: "src/mastra/personas/prompts.ts", description: "TWH persona system prompts" },
-  { name: "schema.ts", path: "src/mastra/db/schema.ts", description: "Database table definitions" },
-  { name: "operations.ts", path: "src/mastra/db/operations.ts", description: "Database query functions" },
-  { name: "index.ts", path: "src/mastra/index.ts", description: "Mastra instance and cron trigger" },
+  {
+    name: "intelligenceWorkflow.ts",
+    path: "src/mastra/workflows/intelligenceWorkflow.ts",
+    description: "Main workflow with 5-step process",
+  },
+  {
+    name: "viewpointWorkflow.ts",
+    path: "src/mastra/workflows/viewpointWorkflow.ts",
+    description: "Persona viewpoint generation workflow",
+  },
+  {
+    name: "researcherAgent.ts",
+    path: "src/mastra/agents/researcherAgent.ts",
+    description: "AI agent with healthcare IT expertise",
+  },
+  {
+    name: "webScraperTool.ts",
+    path: "src/mastra/tools/webScraperTool.ts",
+    description: "RSS and HTML scraping logic",
+  },
+  {
+    name: "entityExtractorTool.ts",
+    path: "src/mastra/tools/entityExtractorTool.ts",
+    description: "AI-powered entity extraction",
+  },
+  {
+    name: "entityNormalizerTool.ts",
+    path: "src/mastra/tools/entityNormalizerTool.ts",
+    description: "Canonical name normalization",
+  },
+  {
+    name: "viewpointGeneratorTool.ts",
+    path: "src/mastra/tools/viewpointGeneratorTool.ts",
+    description: "Persona viewpoint generation",
+  },
+  {
+    name: "transcriptIngestionTool.ts",
+    path: "src/mastra/tools/transcriptIngestionTool.ts",
+    description: "YouTube transcript fetching",
+  },
+  {
+    name: "databaseTool.ts",
+    path: "src/mastra/tools/databaseTool.ts",
+    description: "Database operations tool",
+  },
+  {
+    name: "prompts.ts",
+    path: "src/mastra/personas/prompts.ts",
+    description: "TWH persona system prompts",
+  },
+  {
+    name: "schema.ts",
+    path: "src/mastra/db/schema.ts",
+    description: "Database table definitions",
+  },
+  {
+    name: "operations.ts",
+    path: "src/mastra/db/operations.ts",
+    description: "Database query functions",
+  },
+  {
+    name: "index.ts",
+    path: "src/mastra/index.ts",
+    description: "Mastra instance and cron trigger",
+  },
 ];
 
 export const apiRoutes: Array<{
@@ -120,7 +182,7 @@ export const apiRoutes: Array<{
         LEFT JOIN sources src ON a.source_id = src.id
         WHERE a.id = $1
       `,
-        [id]
+        [id],
       );
 
       if (article.rows.length === 0) {
@@ -134,7 +196,7 @@ export const apiRoutes: Array<{
         JOIN article_organizations ao ON o.id = ao.organization_id
         WHERE ao.article_id = $1
       `,
-        [id]
+        [id],
       );
 
       const technologies = await query(
@@ -144,7 +206,7 @@ export const apiRoutes: Array<{
         JOIN article_technologies at ON t.id = at.technology_id
         WHERE at.article_id = $1
       `,
-        [id]
+        [id],
       );
 
       const people = await query(
@@ -155,7 +217,7 @@ export const apiRoutes: Array<{
         LEFT JOIN organizations o ON p.organization_id = o.id
         WHERE ap.article_id = $1
       `,
-        [id]
+        [id],
       );
 
       const viewpoints = await query(
@@ -166,7 +228,7 @@ export const apiRoutes: Array<{
         WHERE v.article_id = $1
         ORDER BY p.slug
       `,
-        [id]
+        [id],
       );
 
       return c.json({
@@ -218,7 +280,7 @@ export const apiRoutes: Array<{
           body.selector || null,
           body.enabled !== false,
           body.priority || 5,
-        ]
+        ],
       );
 
       return c.json({ source: result.rows[0] });
@@ -253,7 +315,7 @@ export const apiRoutes: Array<{
           body.enabled,
           body.priority,
           id,
-        ]
+        ],
       );
 
       return c.json({ source: result.rows[0] });
@@ -267,7 +329,7 @@ export const apiRoutes: Array<{
       const logger = mastra?.getLogger();
       const id = c.req.param("id");
       logger?.info("🗑️ [API] Deleting source", { id });
-      
+
       await query(`DELETE FROM sources WHERE id = $1`, [id]);
       return c.json({ success: true });
     },
@@ -367,7 +429,11 @@ export const apiRoutes: Array<{
         if (workflow) {
           const result = await workflow.start({ inputData: {} });
           logger?.info("✅ [API] Workflow started", { runId: result?.runId });
-          return c.json({ success: true, message: "Workflow triggered", runId: result?.runId });
+          return c.json({
+            success: true,
+            message: "Workflow triggered",
+            runId: result?.runId,
+          });
         } else {
           logger?.error("❌ [API] Workflow not found");
           return c.json({ success: false, message: "Workflow not found" }, 404);
@@ -395,7 +461,10 @@ export const apiRoutes: Array<{
       }
 
       // Only process message events
-      if (payload.type !== "event_callback" || payload.event?.type !== "message") {
+      if (
+        payload.type !== "event_callback" ||
+        payload.event?.type !== "message"
+      ) {
         return c.text("OK", 200);
       }
 
@@ -460,12 +529,15 @@ export const apiRoutes: Array<{
               if (response.ok) {
                 const html = await response.text();
                 const $ = cheerio.load(html);
-                title = $("title").text().trim() ||
-                        $("h1").first().text().trim() ||
-                        $('meta[property="og:title"]').attr("content") ||
-                        url;
+                title =
+                  $("title").text().trim() ||
+                  $("h1").first().text().trim() ||
+                  $('meta[property="og:title"]').attr("content") ||
+                  url;
                 $("script, style, nav, footer, header, aside").remove();
-                content = $("article, main, .content, .post-body, .entry-content, body")
+                content = $(
+                  "article, main, .content, .post-body, .entry-content, body",
+                )
                   .first()
                   .text()
                   .replace(/\s+/g, " ")
@@ -473,7 +545,10 @@ export const apiRoutes: Array<{
                   .slice(0, 10000);
               }
             } catch (scrapeErr) {
-              logger?.warn("⚠️ [Slack] Scrape failed", { url, error: String(scrapeErr) });
+              logger?.warn("⚠️ [Slack] Scrape failed", {
+                url,
+                error: String(scrapeErr),
+              });
               if (slack) {
                 await slack.chat.postMessage({
                   channel: event.channel,
@@ -495,7 +570,10 @@ export const apiRoutes: Array<{
               continue;
             }
 
-            const contentHash = crypto.createHash("md5").update(content).digest("hex");
+            const contentHash = crypto
+              .createHash("md5")
+              .update(content)
+              .digest("hex");
 
             // Save article
             const articleId = await saveArticle({
@@ -524,12 +602,23 @@ Respond with JSON only:
                 const extracted = JSON.parse(jsonMatch[0]);
                 await saveEntities(
                   articleId,
-                  (extracted.organizations || []).map((o: any) => ({ canonicalName: o.name, type: o.type, confidence: o.confidence })),
+                  (extracted.organizations || []).map((o: any) => ({
+                    canonicalName: o.name,
+                    type: o.type,
+                    confidence: o.confidence,
+                  })),
                   extracted.people || [],
-                  (extracted.technologies || []).map((t: any) => ({ canonicalName: t.name, category: t.category, vendor: t.vendor, confidence: t.confidence }))
+                  (extracted.technologies || []).map((t: any) => ({
+                    canonicalName: t.name,
+                    category: t.category,
+                    vendor: t.vendor,
+                    confidence: t.confidence,
+                  })),
                 );
               }
-            } catch { /* entity extraction is optional */ }
+            } catch {
+              /* entity extraction is optional */
+            }
 
             // Generate summary
             let summaryData: any = null;
@@ -547,15 +636,23 @@ Respond in JSON:
               const jsonMatch = summaryResponse.text.match(/\{[\s\S]*\}/);
               if (jsonMatch) {
                 summaryData = JSON.parse(jsonMatch[0]);
-                await saveSummary(articleId, summaryData.summary, summaryData.takeaways || [], summaryData.tags || [], summaryData.relevanceScore || 5);
+                await saveSummary(
+                  articleId,
+                  summaryData.summary,
+                  summaryData.takeaways || [],
+                  summaryData.tags || [],
+                  summaryData.relevanceScore || 5,
+                );
               }
-            } catch { /* summary is optional */ }
+            } catch {
+              /* summary is optional */
+            }
 
             // Generate viewpoints
             let viewpointsGenerated = 0;
             if (summaryData) {
               const personas = await query(
-                `SELECT * FROM personas WHERE enabled = true AND slug != 'newsday' ORDER BY slug`
+                `SELECT * FROM personas WHERE enabled = true AND slug != 'newsday' ORDER BY slug`,
               );
 
               for (const persona of personas.rows) {
@@ -587,17 +684,27 @@ Respond with valid JSON only:
                     });
                     viewpointsGenerated++;
                   }
-                } catch { /* individual viewpoint failure is ok */ }
+                } catch {
+                  /* individual viewpoint failure is ok */
+                }
               }
 
               // Newsday roundtable
               if (viewpointsGenerated === 3) {
                 try {
                   const allVps = await getViewpointsForArticle(articleId);
-                  const billVp = allVps.find((v: any) => v.persona_slug === "bill-russell");
-                  const drexVp = allVps.find((v: any) => v.persona_slug === "drex-deford");
-                  const sarahVp = allVps.find((v: any) => v.persona_slug === "sarah-richardson");
-                  const newsdayPersona = await query(`SELECT * FROM personas WHERE slug = 'newsday'`);
+                  const billVp = allVps.find(
+                    (v: any) => v.persona_slug === "bill-russell",
+                  );
+                  const drexVp = allVps.find(
+                    (v: any) => v.persona_slug === "drex-deford",
+                  );
+                  const sarahVp = allVps.find(
+                    (v: any) => v.persona_slug === "sarah-richardson",
+                  );
+                  const newsdayPersona = await query(
+                    `SELECT * FROM personas WHERE slug = 'newsday'`,
+                  );
 
                   if (billVp && drexVp && sarahVp && newsdayPersona.rows[0]) {
                     const rtResponse = await generateText({
@@ -626,7 +733,9 @@ Respond with JSON: {"viewpoint": "4-6 paragraph narrative.", "keyInsights": ["in
                       viewpointsGenerated++;
                     }
                   }
-                } catch { /* roundtable failure is ok */ }
+                } catch {
+                  /* roundtable failure is ok */
+                }
               }
             }
 
@@ -644,24 +753,51 @@ Respond with JSON: {"viewpoint": "4-6 paragraph narrative.", "keyInsights": ["in
                   tags: summaryData?.tags || [],
                   viewpointsGenerated,
                 },
-                viewpoints
+                viewpoints,
               );
 
               // Remove processing reaction, add checkmark
               try {
-                await slack.reactions.remove({ channel: event.channel, timestamp: event.ts, name: "hourglass_flowing_sand" });
-                await slack.reactions.add({ channel: event.channel, timestamp: event.ts, name: "white_check_mark" });
-              } catch { /* reactions are best-effort */ }
+                await slack.reactions.remove({
+                  channel: event.channel,
+                  timestamp: event.ts,
+                  name: "hourglass_flowing_sand",
+                });
+                await slack.reactions.add({
+                  channel: event.channel,
+                  timestamp: event.ts,
+                  name: "white_check_mark",
+                });
+              } catch {
+                /* reactions are best-effort */
+              }
             }
 
-            logger?.info("✅ [Slack] Article processed from link share", { articleId, url, viewpointsGenerated });
+            logger?.info("✅ [Slack] Article processed from link share", {
+              articleId,
+              url,
+              viewpointsGenerated,
+            });
           } catch (err) {
-            logger?.error("❌ [Slack] Failed to process URL", { url, error: String(err) });
+            logger?.error("❌ [Slack] Failed to process URL", {
+              url,
+              error: String(err),
+            });
             if (slack) {
               try {
-                await slack.reactions.remove({ channel: event.channel, timestamp: event.ts, name: "hourglass_flowing_sand" });
-                await slack.reactions.add({ channel: event.channel, timestamp: event.ts, name: "x" });
-              } catch { /* best-effort */ }
+                await slack.reactions.remove({
+                  channel: event.channel,
+                  timestamp: event.ts,
+                  name: "hourglass_flowing_sand",
+                });
+                await slack.reactions.add({
+                  channel: event.channel,
+                  timestamp: event.ts,
+                  name: "x",
+                });
+              } catch {
+                /* best-effort */
+              }
             }
           }
         }
@@ -682,11 +818,17 @@ Respond with JSON: {"viewpoint": "4-6 paragraph narrative.", "keyInsights": ["in
       const logger = mastra?.getLogger();
       const body = await c.req.json();
 
-      logger?.info("📝 [API] Manual article submission", { title: body.title, url: body.url });
+      logger?.info("📝 [API] Manual article submission", {
+        title: body.title,
+        url: body.url,
+      });
 
       // Validate required fields
       if (!body.title || (!body.content && !body.url)) {
-        return c.json({ error: "Required: title + either content or url" }, 400);
+        return c.json(
+          { error: "Required: title + either content or url" },
+          400,
+        );
       }
 
       try {
@@ -707,7 +849,9 @@ Respond with JSON: {"viewpoint": "4-6 paragraph narrative.", "keyInsights": ["in
               const html = await response.text();
               const $ = cheerio.load(html);
               $("script, style, nav, footer, header, aside").remove();
-              content = $("article, main, .content, .post-body, .entry-content, body")
+              content = $(
+                "article, main, .content, .post-body, .entry-content, body",
+              )
                 .first()
                 .text()
                 .replace(/\s+/g, " ")
@@ -715,17 +859,29 @@ Respond with JSON: {"viewpoint": "4-6 paragraph narrative.", "keyInsights": ["in
                 .slice(0, 10000);
             }
           } catch (scrapeErr) {
-            logger?.warn("⚠️ [API] Could not scrape URL, using provided content", {
-              error: String(scrapeErr),
-            });
+            logger?.warn(
+              "⚠️ [API] Could not scrape URL, using provided content",
+              {
+                error: String(scrapeErr),
+              },
+            );
           }
         }
 
         if (!content || content.length < 20) {
-          return c.json({ error: "No content available. Provide content directly or a scrapeable URL." }, 400);
+          return c.json(
+            {
+              error:
+                "No content available. Provide content directly or a scrapeable URL.",
+            },
+            400,
+          );
         }
 
-        const contentHash = crypto.createHash("md5").update(content).digest("hex");
+        const contentHash = crypto
+          .createHash("md5")
+          .update(content)
+          .digest("hex");
 
         // 1. Save the article
         const articleId = await saveArticle({
@@ -789,7 +945,9 @@ Respond with JSON only:
             entitiesExtracted = orgs.length + people.length + tech.length;
           }
         } catch (e) {
-          logger?.warn("⚠️ [API] Entity extraction failed", { error: String(e) });
+          logger?.warn("⚠️ [API] Entity extraction failed", {
+            error: String(e),
+          });
         }
 
         // 3. Generate summary
@@ -820,18 +978,20 @@ Respond in JSON:
               summaryData.summary,
               summaryData.takeaways || [],
               summaryData.tags || [],
-              summaryData.relevanceScore || 5
+              summaryData.relevanceScore || 5,
             );
           }
         } catch (e) {
-          logger?.warn("⚠️ [API] Summary generation failed", { error: String(e) });
+          logger?.warn("⚠️ [API] Summary generation failed", {
+            error: String(e),
+          });
         }
 
         // 4. Generate persona viewpoints (if relevance >= 6)
         let viewpointsGenerated = 0;
         if (summaryData && (summaryData.relevanceScore || 0) >= 6) {
           const personas = await query(
-            `SELECT * FROM personas WHERE enabled = true AND slug != 'newsday' ORDER BY slug`
+            `SELECT * FROM personas WHERE enabled = true AND slug != 'newsday' ORDER BY slug`,
           );
 
           for (const persona of personas.rows) {
@@ -870,9 +1030,12 @@ Respond with valid JSON only:
                 viewpointsGenerated++;
               }
             } catch (e) {
-              logger?.warn(`⚠️ [API] Viewpoint generation failed for ${persona.slug}`, {
-                error: String(e),
-              });
+              logger?.warn(
+                `⚠️ [API] Viewpoint generation failed for ${persona.slug}`,
+                {
+                  error: String(e),
+                },
+              );
             }
           }
 
@@ -883,16 +1046,22 @@ Respond with valid JSON only:
                 `SELECT v.*, p.slug as persona_slug FROM viewpoints v
                  JOIN personas p ON v.persona_id = p.id
                  WHERE v.article_id = $1 AND p.slug != 'newsday'`,
-                [articleId]
+                [articleId],
               );
 
-              const billVp = viewpoints.rows.find((v: any) => v.persona_slug === "bill-russell");
-              const drexVp = viewpoints.rows.find((v: any) => v.persona_slug === "drex-deford");
-              const sarahVp = viewpoints.rows.find((v: any) => v.persona_slug === "sarah-richardson");
+              const billVp = viewpoints.rows.find(
+                (v: any) => v.persona_slug === "bill-russell",
+              );
+              const drexVp = viewpoints.rows.find(
+                (v: any) => v.persona_slug === "drex-deford",
+              );
+              const sarahVp = viewpoints.rows.find(
+                (v: any) => v.persona_slug === "sarah-richardson",
+              );
 
               if (billVp && drexVp && sarahVp) {
                 const newsdayPersona = await query(
-                  `SELECT * FROM personas WHERE slug = 'newsday'`
+                  `SELECT * FROM personas WHERE slug = 'newsday'`,
                 );
 
                 if (newsdayPersona.rows[0]) {
@@ -933,7 +1102,9 @@ Respond with valid JSON:
                 }
               }
             } catch (e) {
-              logger?.warn("⚠️ [API] Newsday roundtable failed", { error: String(e) });
+              logger?.warn("⚠️ [API] Newsday roundtable failed", {
+                error: String(e),
+              });
             }
           }
         }
@@ -954,12 +1125,15 @@ Respond with valid JSON:
           relevanceScore: summaryData?.relevanceScore || null,
           tags: summaryData?.tags || [],
           viewpointsGenerated,
-          message: viewpointsGenerated > 0
-            ? `Article processed with ${viewpointsGenerated} persona viewpoints`
-            : "Article processed (viewpoints skipped - relevance below 6)",
+          message:
+            viewpointsGenerated > 0
+              ? `Article processed with ${viewpointsGenerated} persona viewpoints`
+              : "Article processed (viewpoints skipped - relevance below 6)",
         });
       } catch (error: any) {
-        logger?.error("❌ [API] Manual submission failed", { error: error.message });
+        logger?.error("❌ [API] Manual submission failed", {
+          error: error.message,
+        });
         return c.json({ success: false, error: error.message }, 500);
       }
     },
@@ -996,7 +1170,7 @@ Respond with valid JSON:
            FROM articles a
            LEFT JOIN summaries s ON a.id = s.article_id
            WHERE a.id = $1`,
-          [body.articleId]
+          [body.articleId],
         );
 
         if (article.rows.length === 0) {
@@ -1006,10 +1180,9 @@ Respond with valid JSON:
         const art = article.rows[0];
 
         // Get the persona
-        const persona = await query(
-          `SELECT * FROM personas WHERE slug = $1`,
-          [body.personaSlug]
-        );
+        const persona = await query(`SELECT * FROM personas WHERE slug = $1`, [
+          body.personaSlug,
+        ]);
 
         if (persona.rows.length === 0) {
           return c.json({ error: "Persona not found" }, 404);
@@ -1020,7 +1193,7 @@ Respond with valid JSON:
         // Get the viewpoint for this persona (if exists)
         const viewpoint = await query(
           `SELECT * FROM viewpoints WHERE article_id = $1 AND persona_id = $2`,
-          [body.articleId, p.id]
+          [body.articleId, p.id],
         );
 
         const vpText = viewpoint.rows[0]?.viewpoint_text || "";
@@ -1030,7 +1203,7 @@ Respond with valid JSON:
           `SELECT o.canonical_name, o.type FROM organizations o
            JOIN article_organizations ao ON o.id = ao.organization_id
            WHERE ao.article_id = $1`,
-          [body.articleId]
+          [body.articleId],
         );
 
         const briefPrompt = `You are a healthcare IT vendor sales/marketing strategist. Generate a personalized email brief that a sales rep could send to someone who thinks like ${p.name} (${p.title}).
@@ -1040,13 +1213,15 @@ Name: ${p.name}
 Role: ${p.title}
 Background: ${p.background}
 Analytical Framework: "${p.framework}"
-What they care about: ${body.personaSlug === "bill-russell"
-  ? "Strategic CIO decisions, ROI, vendor evaluation, operational stability vs. innovation"
-  : body.personaSlug === "drex-deford"
-  ? "Cybersecurity implications, risk posture, patient safety, zero-trust, threat landscape"
-  : body.personaSlug === "sarah-richardson"
-  ? "Leadership impact, workforce transformation, change management, career development, organizational culture"
-  : "Multi-perspective strategic analysis"}
+What they care about: ${
+          body.personaSlug === "bill-russell"
+            ? "Strategic CIO decisions, ROI, vendor evaluation, operational stability vs. innovation"
+            : body.personaSlug === "drex-deford"
+              ? "Cybersecurity implications, risk posture, patient safety, zero-trust, threat landscape"
+              : body.personaSlug === "sarah-richardson"
+                ? "Leadership impact, workforce transformation, change management, career development, organizational culture"
+                : "Multi-perspective strategic analysis"
+        }
 
 ## ARTICLE CONTEXT
 Title: ${art.title}
@@ -1058,9 +1233,13 @@ Organizations Mentioned: ${orgs.rows.map((o: any) => `${o.canonical_name} (${o.t
 ${vpText ? `## THIS PERSONA'S VIEWPOINT ON THE ARTICLE\n${vpText}` : ""}
 
 ## BRIEF REQUIREMENTS
-${body.briefType === "follow-up" ? "This is a follow-up email after an initial meeting." :
-  body.briefType === "cold-outreach" ? "This is a cold outreach email - be concise and value-driven." :
-  "This is a thought-leadership share to stay top-of-mind."}
+${
+  body.briefType === "follow-up"
+    ? "This is a follow-up email after an initial meeting."
+    : body.briefType === "cold-outreach"
+      ? "This is a cold outreach email - be concise and value-driven."
+      : "This is a thought-leadership share to stay top-of-mind."
+}
 
 ${body.vendorName ? `The sender works at: ${body.vendorName}` : ""}
 ${body.vendorProduct ? `The product/service being positioned: ${body.vendorProduct}` : ""}
@@ -1109,7 +1288,9 @@ Generate the email brief in this JSON format:
           },
         });
       } catch (error: any) {
-        logger?.error("❌ [API] Brief generation failed", { error: error.message });
+        logger?.error("❌ [API] Brief generation failed", {
+          error: error.message,
+        });
         return c.json({ success: false, error: error.message }, 500);
       }
     },
@@ -1153,7 +1334,7 @@ Generate the email brief in this JSON format:
          JOIN personas p ON v.persona_id = p.id
          WHERE v.article_id = $1
          ORDER BY p.slug`,
-        [articleId]
+        [articleId],
       );
 
       const article = await query(
@@ -1161,7 +1342,7 @@ Generate the email brief in this JSON format:
          FROM articles a
          LEFT JOIN summaries s ON a.id = s.article_id
          WHERE a.id = $1`,
-        [articleId]
+        [articleId],
       );
 
       return c.json({
@@ -1183,7 +1364,7 @@ Generate the email brief in this JSON format:
          FROM viewpoints v
          JOIN personas p ON v.persona_id = p.id
          WHERE v.article_id = $1 AND p.slug = $2`,
-        [articleId, personaSlug]
+        [articleId, personaSlug],
       );
 
       if (viewpoint.rows.length === 0) {
@@ -1205,13 +1386,24 @@ Generate the email brief in this JSON format:
         const workflow = mastra?.getWorkflow("viewpointWorkflow");
         if (workflow) {
           const result = await workflow.start({ inputData: {} });
-          logger?.info("✅ [API] Viewpoint workflow started", { runId: result?.runId });
-          return c.json({ success: true, message: "Viewpoint workflow triggered", runId: result?.runId });
+          logger?.info("✅ [API] Viewpoint workflow started", {
+            runId: result?.runId,
+          });
+          return c.json({
+            success: true,
+            message: "Viewpoint workflow triggered",
+            runId: result?.runId,
+          });
         } else {
-          return c.json({ success: false, message: "Viewpoint workflow not found" }, 404);
+          return c.json(
+            { success: false, message: "Viewpoint workflow not found" },
+            404,
+          );
         }
       } catch (error: any) {
-        logger?.error("❌ [API] Viewpoint trigger failed", { error: error.message });
+        logger?.error("❌ [API] Viewpoint trigger failed", {
+          error: error.message,
+        });
         return c.json({ success: false, message: error.message }, 500);
       }
     },
@@ -1223,13 +1415,14 @@ Generate the email brief in this JSON format:
       const mastra = c.get("mastra");
       const logger = mastra?.getLogger();
       const body = await c.req.json();
-      logger?.info("📺 [API] Transcript ingestion requested", { personaSlug: body.personaSlug });
+      logger?.info("📺 [API] Transcript ingestion requested", {
+        personaSlug: body.personaSlug,
+      });
 
       try {
-        const persona = await query(
-          `SELECT * FROM personas WHERE slug = $1`,
-          [body.personaSlug]
-        );
+        const persona = await query(`SELECT * FROM personas WHERE slug = $1`, [
+          body.personaSlug,
+        ]);
 
         if (persona.rows.length === 0) {
           return c.json({ error: "Persona not found" }, 404);
@@ -1241,7 +1434,9 @@ Generate the email brief in this JSON format:
           persona: persona.rows[0],
         });
       } catch (error: any) {
-        logger?.error("❌ [API] Transcript ingestion failed", { error: error.message });
+        logger?.error("❌ [API] Transcript ingestion failed", {
+          error: error.message,
+        });
         return c.json({ success: false, message: error.message }, 500);
       }
     },
@@ -1261,7 +1456,7 @@ Generate the email brief in this JSON format:
          WHERE p.slug = $1
          ORDER BY t.created_at DESC
          LIMIT 50`,
-        [personaSlug]
+        [personaSlug],
       );
 
       return c.json({ transcripts: transcripts.rows });
@@ -1291,7 +1486,7 @@ Generate the email brief in this JSON format:
 
       logger?.info("📥 [API] Download source file", { filename });
 
-      const file = SOURCE_FILES.find(f => f.name === filename);
+      const file = SOURCE_FILES.find((f) => f.name === filename);
       if (!file) {
         return c.json({ error: "File not found" }, 404);
       }

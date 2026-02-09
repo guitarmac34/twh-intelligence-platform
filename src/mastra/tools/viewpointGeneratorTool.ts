@@ -22,7 +22,9 @@ export const viewpointGeneratorTool = createTool({
     topicTags: z.array(z.string()).describe("Topic tags from the summary"),
     personaSlug: z
       .string()
-      .describe("The persona slug (bill-russell, drex-deford, sarah-richardson)"),
+      .describe(
+        "The persona slug (bill-russell, drex-deford, sarah-richardson)",
+      ),
     transcriptExcerpts: z
       .array(z.string())
       .optional()
@@ -47,7 +49,7 @@ export const viewpointGeneratorTool = createTool({
     try {
       const systemPrompt = buildPersonaPrompt(
         context.personaSlug,
-        context.transcriptExcerpts
+        context.transcriptExcerpts,
       );
 
       const userPrompt = `Analyze this healthcare IT article from your unique perspective:

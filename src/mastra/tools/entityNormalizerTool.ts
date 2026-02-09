@@ -4,7 +4,7 @@ import { z } from "zod";
 // Canonical dictionaries with aliases for healthcare IT entities
 const ORGANIZATION_ALIASES: Record<string, string> = {
   // Vendors
-  "cerner": "Oracle Health",
+  cerner: "Oracle Health",
   "cerner corporation": "Oracle Health",
   "oracle cerner": "Oracle Health",
   "epic systems": "Epic",
@@ -13,13 +13,13 @@ const ORGANIZATION_ALIASES: Record<string, string> = {
   "google health": "Google",
   "google cloud": "Google",
   "amazon web services": "AWS",
-  "amazon": "AWS",
+  amazon: "AWS",
   "ibm watson health": "IBM",
   "ibm watson": "IBM",
-  "meditech": "MEDITECH",
-  "allscripts": "Veradigm",
+  meditech: "MEDITECH",
+  allscripts: "Veradigm",
   "allscripts healthcare": "Veradigm",
-  
+
   // Health Systems
   "hca healthcare": "HCA",
   "hca hospitals": "HCA",
@@ -33,14 +33,14 @@ const ORGANIZATION_ALIASES: Record<string, string> = {
   "mayo clinic hospital": "Mayo Clinic",
   "johns hopkins medicine": "Johns Hopkins",
   "johns hopkins hospital": "Johns Hopkins",
-  
+
   // Government/Agencies
   "office of the national coordinator": "ONC",
   "office of national coordinator": "ONC",
   "centers for medicare and medicaid services": "CMS",
   "centers for medicare & medicaid services": "CMS",
   "department of health and human services": "HHS",
-  "hhs": "HHS",
+  hhs: "HHS",
   "food and drug administration": "FDA",
   "veterans affairs": "VA",
   "veterans health administration": "VA",
@@ -64,7 +64,7 @@ const TECHNOLOGY_ALIASES: Record<string, string> = {
   "population health management": "PHM",
   "patient portal": "Patient Portal",
   "telehealth platform": "Telehealth",
-  "telemedicine": "Telehealth",
+  telemedicine: "Telehealth",
   "virtual care": "Telehealth",
 };
 
@@ -79,7 +79,7 @@ export const entityNormalizerTool = createTool({
         name: z.string(),
         type: z.string(),
         confidence: z.number(),
-      })
+      }),
     ),
     people: z.array(
       z.object({
@@ -87,7 +87,7 @@ export const entityNormalizerTool = createTool({
         title: z.string().optional(),
         organization: z.string().optional(),
         confidence: z.number(),
-      })
+      }),
     ),
     technologies: z.array(
       z.object({
@@ -95,7 +95,7 @@ export const entityNormalizerTool = createTool({
         category: z.string(),
         vendor: z.string().optional(),
         confidence: z.number(),
-      })
+      }),
     ),
   }),
 
@@ -107,7 +107,7 @@ export const entityNormalizerTool = createTool({
         type: z.string(),
         confidence: z.number(),
         wasNormalized: z.boolean(),
-      })
+      }),
     ),
     people: z.array(
       z.object({
@@ -115,7 +115,7 @@ export const entityNormalizerTool = createTool({
         title: z.string().optional(),
         organization: z.string().optional(),
         confidence: z.number(),
-      })
+      }),
     ),
     technologies: z.array(
       z.object({
@@ -125,7 +125,7 @@ export const entityNormalizerTool = createTool({
         vendor: z.string().optional(),
         confidence: z.number(),
         wasNormalized: z.boolean(),
-      })
+      }),
     ),
     success: z.boolean(),
   }),
@@ -142,7 +142,7 @@ export const entityNormalizerTool = createTool({
     const normalizedOrgs = context.organizations.map((org) => {
       const lowerName = org.name.toLowerCase().trim();
       const canonical = ORGANIZATION_ALIASES[lowerName];
-      
+
       return {
         canonicalName: canonical || org.name,
         originalName: org.name,
@@ -159,7 +159,7 @@ export const entityNormalizerTool = createTool({
         const lowerOrg = normalizedOrg.toLowerCase().trim();
         normalizedOrg = ORGANIZATION_ALIASES[lowerOrg] || normalizedOrg;
       }
-      
+
       return {
         name: person.name.trim(),
         title: person.title?.trim(),
@@ -172,13 +172,14 @@ export const entityNormalizerTool = createTool({
     const normalizedTech = context.technologies.map((tech) => {
       const lowerName = tech.name.toLowerCase().trim();
       const canonical = TECHNOLOGY_ALIASES[lowerName];
-      
+
       let normalizedVendor = tech.vendor;
       if (normalizedVendor) {
         const lowerVendor = normalizedVendor.toLowerCase().trim();
-        normalizedVendor = ORGANIZATION_ALIASES[lowerVendor] || normalizedVendor;
+        normalizedVendor =
+          ORGANIZATION_ALIASES[lowerVendor] || normalizedVendor;
       }
-      
+
       return {
         canonicalName: canonical || tech.name,
         originalName: tech.name,
@@ -192,12 +193,12 @@ export const entityNormalizerTool = createTool({
     // Remove duplicates after normalization
     const uniqueOrgs = normalizedOrgs.filter(
       (org, index, self) =>
-        index === self.findIndex((o) => o.canonicalName === org.canonicalName)
+        index === self.findIndex((o) => o.canonicalName === org.canonicalName),
     );
 
     const uniqueTech = normalizedTech.filter(
       (tech, index, self) =>
-        index === self.findIndex((t) => t.canonicalName === tech.canonicalName)
+        index === self.findIndex((t) => t.canonicalName === tech.canonicalName),
     );
 
     logger?.info("✅ [entityNormalizerTool] Normalization complete", {

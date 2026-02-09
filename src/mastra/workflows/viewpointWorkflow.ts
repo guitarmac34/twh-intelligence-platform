@@ -36,7 +36,9 @@ const findArticlesStep = createStep({
 
   execute: async ({ mastra }) => {
     const logger = mastra?.getLogger();
-    logger?.info("🚀 [Viewpoint Step 1] Finding articles needing viewpoints...");
+    logger?.info(
+      "🚀 [Viewpoint Step 1] Finding articles needing viewpoints...",
+    );
 
     try {
       await initializeDatabase();
@@ -45,7 +47,7 @@ const findArticlesStep = createStep({
         "TWH Viewpoint Agent",
         "viewpoint_workflow_started",
         "started",
-        { timestamp: new Date().toISOString() }
+        { timestamp: new Date().toISOString() },
       );
 
       const personas = await getPersonas();
@@ -61,7 +63,12 @@ const findArticlesStep = createStep({
       const errorMessage =
         error instanceof Error ? error.message : String(error);
       logger?.error("❌ [Viewpoint Step 1] Failed", { error: errorMessage });
-      return { articles: [], personas: [], success: false, error: errorMessage };
+      return {
+        articles: [],
+        personas: [],
+        success: false,
+        error: errorMessage,
+      };
     }
   },
 });
@@ -104,7 +111,7 @@ const generateViewpointsStep = createStep({
     const personaMap = new Map(
       inputData.personas
         .filter((p: any) => individualSlugs.includes(p.slug))
-        .map((p: any) => [p.slug, p])
+        .map((p: any) => [p.slug, p]),
     );
 
     let viewpointsGenerated = 0;
@@ -113,7 +120,9 @@ const generateViewpointsStep = createStep({
 
     for (const article of inputData.articles) {
       articlesProcessed++;
-      logger?.info(`📝 [Viewpoint Step 2] Processing: ${article.title.slice(0, 60)}...`);
+      logger?.info(
+        `📝 [Viewpoint Step 2] Processing: ${article.title.slice(0, 60)}...`,
+      );
 
       for (const slug of individualSlugs) {
         const persona = personaMap.get(slug) as any;
@@ -125,7 +134,7 @@ const generateViewpointsStep = createStep({
           try {
             const transcripts = await getTranscriptsForPersona(
               persona.id,
-              article.topic_tags
+              article.topic_tags,
             );
             transcriptExcerpts = transcripts
               .slice(0, 3)
@@ -193,10 +202,10 @@ Respond with valid JSON only in this exact format:
           errors++;
           const errorMessage =
             error instanceof Error ? error.message : String(error);
-          logger?.error(
-            `❌ [Viewpoint Step 2] Failed for ${slug}`,
-            { error: errorMessage, articleId: article.id }
-          );
+          logger?.error(`❌ [Viewpoint Step 2] Failed for ${slug}`, {
+            error: errorMessage,
+            articleId: article.id,
+          });
         }
       }
     }
@@ -266,13 +275,13 @@ const generateRoundtableStep = createStep({
         const viewpoints = await getViewpointsForArticle(article.id);
 
         const billVp = viewpoints.find(
-          (v: any) => v.persona_slug === "bill-russell"
+          (v: any) => v.persona_slug === "bill-russell",
         );
         const drexVp = viewpoints.find(
-          (v: any) => v.persona_slug === "drex-deford"
+          (v: any) => v.persona_slug === "drex-deford",
         );
         const sarahVp = viewpoints.find(
-          (v: any) => v.persona_slug === "sarah-richardson"
+          (v: any) => v.persona_slug === "sarah-richardson",
         );
 
         if (!billVp || !drexVp || !sarahVp) continue;
@@ -384,7 +393,7 @@ const logViewpointCompletionStep = createStep({
         roundtablesGenerated: inputData.roundtablesGenerated,
         errors: inputData.errors,
         timestamp: new Date().toISOString(),
-      }
+      },
     );
 
     const summary = `

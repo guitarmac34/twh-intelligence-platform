@@ -6,7 +6,7 @@ export { initializeDatabase };
 // Get all enabled sources
 export async function getSources() {
   const result = await query(
-    "SELECT * FROM sources WHERE enabled = true ORDER BY priority DESC"
+    "SELECT * FROM sources WHERE enabled = true ORDER BY priority DESC",
   );
   return result.rows;
 }
@@ -15,7 +15,7 @@ export async function getSources() {
 export async function checkArticleExists(contentHash: string, url: string) {
   const result = await query(
     "SELECT id FROM articles WHERE content_hash = $1 OR url = $2",
-    [contentHash, url]
+    [contentHash, url],
   );
   return { exists: result.rows.length > 0, articleId: result.rows[0]?.id };
 }
@@ -48,7 +48,7 @@ export async function saveArticle(article: {
       article.content,
       article.contentHash,
       "scraped",
-    ]
+    ],
   );
   return result.rows[0]?.id;
 }
@@ -58,7 +58,7 @@ export async function saveEntities(
   articleId: string,
   organizations: any[],
   people: any[],
-  technologies: any[]
+  technologies: any[],
 ) {
   // Save organizations and link to article
   for (const org of organizations) {
@@ -67,7 +67,7 @@ export async function saveEntities(
        VALUES ($1, $2)
        ON CONFLICT (canonical_name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
        RETURNING id`,
-      [org.canonicalName, org.type]
+      [org.canonicalName, org.type],
     );
     const orgId = orgResult.rows[0]?.id;
 
@@ -76,7 +76,7 @@ export async function saveEntities(
         `INSERT INTO article_organizations (article_id, organization_id, confidence)
          VALUES ($1, $2, $3)
          ON CONFLICT (article_id, organization_id) DO NOTHING`,
-        [articleId, orgId, org.confidence]
+        [articleId, orgId, org.confidence],
       );
     }
   }
@@ -87,7 +87,7 @@ export async function saveEntities(
     if (person.organization) {
       const orgResult = await query(
         `SELECT id FROM organizations WHERE canonical_name = $1`,
-        [person.organization]
+        [person.organization],
       );
       orgId = orgResult.rows[0]?.id;
     }
@@ -97,14 +97,14 @@ export async function saveEntities(
        VALUES ($1, $2, $3)
        ON CONFLICT DO NOTHING
        RETURNING id`,
-      [person.name, person.title || null, orgId]
+      [person.name, person.title || null, orgId],
     );
 
     let personId = personResult.rows[0]?.id;
     if (!personId) {
       const existingPerson = await query(
         `SELECT id FROM people WHERE name = $1`,
-        [person.name]
+        [person.name],
       );
       personId = existingPerson.rows[0]?.id;
     }
@@ -114,7 +114,7 @@ export async function saveEntities(
         `INSERT INTO article_people (article_id, person_id, confidence)
          VALUES ($1, $2, $3)
          ON CONFLICT (article_id, person_id) DO NOTHING`,
-        [articleId, personId, person.confidence]
+        [articleId, personId, person.confidence],
       );
     }
   }
@@ -125,7 +125,7 @@ export async function saveEntities(
     if (tech.vendor) {
       const vendorResult = await query(
         `SELECT id FROM organizations WHERE canonical_name = $1`,
-        [tech.vendor]
+        [tech.vendor],
       );
       vendorId = vendorResult.rows[0]?.id;
     }
@@ -135,7 +135,7 @@ export async function saveEntities(
        VALUES ($1, $2, $3)
        ON CONFLICT (name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
        RETURNING id`,
-      [tech.canonicalName, tech.category, vendorId]
+      [tech.canonicalName, tech.category, vendorId],
     );
     const techId = techResult.rows[0]?.id;
 
@@ -144,7 +144,7 @@ export async function saveEntities(
         `INSERT INTO article_technologies (article_id, technology_id, confidence)
          VALUES ($1, $2, $3)
          ON CONFLICT (article_id, technology_id) DO NOTHING`,
-        [articleId, techId, tech.confidence]
+        [articleId, techId, tech.confidence],
       );
     }
   }
@@ -152,7 +152,7 @@ export async function saveEntities(
   // Update article status
   await query(
     `UPDATE articles SET processing_status = 'extracted', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-    [articleId]
+    [articleId],
   );
 }
 
@@ -162,7 +162,7 @@ export async function saveSummary(
   summary: string,
   takeaways: string[],
   tags: string[],
-  relevanceScore: number
+  relevanceScore: number,
 ) {
   await query(
     `INSERT INTO summaries (article_id, short_summary, key_takeaways, topic_tags, relevance_score)
@@ -173,12 +173,12 @@ export async function saveSummary(
        topic_tags = EXCLUDED.topic_tags,
        relevance_score = EXCLUDED.relevance_score,
        updated_at = CURRENT_TIMESTAMP`,
-    [articleId, summary, takeaways, tags, relevanceScore]
+    [articleId, summary, takeaways, tags, relevanceScore],
   );
 
   await query(
     `UPDATE articles SET processing_status = 'summarized', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-    [articleId]
+    [articleId],
   );
 }
 
@@ -188,12 +188,12 @@ export async function logAction(
   action: string,
   status: string,
   details: any,
-  runId?: string
+  runId?: string,
 ) {
   await query(
     `INSERT INTO agent_logs (agent_name, action, status, details, run_id)
      VALUES ($1, $2, $3, $4, $5)`,
-    [agentName, action, status, details || {}, runId || null]
+    [agentName, action, status, details || {}, runId || null],
   );
 }
 
@@ -204,17 +204,14 @@ export async function logAction(
 // Get all enabled personas
 export async function getPersonas() {
   const result = await query(
-    "SELECT * FROM personas WHERE enabled = true ORDER BY slug"
+    "SELECT * FROM personas WHERE enabled = true ORDER BY slug",
   );
   return result.rows;
 }
 
 // Get a persona by slug
 export async function getPersonaBySlug(slug: string) {
-  const result = await query(
-    "SELECT * FROM personas WHERE slug = $1",
-    [slug]
-  );
+  const result = await query("SELECT * FROM personas WHERE slug = $1", [slug]);
   return result.rows[0] || null;
 }
 
@@ -243,19 +240,22 @@ export async function saveTranscript(transcript: {
       transcript.publishedDate ? new Date(transcript.publishedDate) : null,
       transcript.rawTranscript,
       transcript.durationSeconds || null,
-    ]
+    ],
   );
   return result.rows[0]?.id;
 }
 
 // Get transcripts for a persona, optionally filtered by topic tags
-export async function getTranscriptsForPersona(personaId: string, topicTags?: string[]) {
+export async function getTranscriptsForPersona(
+  personaId: string,
+  topicTags?: string[],
+) {
   if (topicTags && topicTags.length > 0) {
     const result = await query(
       `SELECT * FROM transcripts
        WHERE persona_id = $1 AND processing_status = 'processed' AND topic_tags && $2
        ORDER BY published_date DESC LIMIT 10`,
-      [personaId, topicTags]
+      [personaId, topicTags],
     );
     return result.rows;
   }
@@ -264,7 +264,7 @@ export async function getTranscriptsForPersona(personaId: string, topicTags?: st
     `SELECT * FROM transcripts
      WHERE persona_id = $1 AND processing_status = 'processed'
      ORDER BY published_date DESC LIMIT 10`,
-    [personaId]
+    [personaId],
   );
   return result.rows;
 }
@@ -298,7 +298,7 @@ export async function saveViewpoint(viewpoint: {
       viewpoint.confidenceScore,
       viewpoint.modelUsed || "gpt-4o-mini",
       viewpoint.generationMetadata || {},
-    ]
+    ],
   );
   return result.rows[0]?.id;
 }
@@ -311,7 +311,7 @@ export async function getViewpointsForArticle(articleId: string) {
      JOIN personas p ON v.persona_id = p.id
      WHERE v.article_id = $1
      ORDER BY p.slug`,
-    [articleId]
+    [articleId],
   );
   return result.rows;
 }
@@ -330,7 +330,7 @@ export async function getArticlesNeedingViewpoints(limit: number = 20) {
        )
      ORDER BY s.relevance_score DESC, a.created_at DESC
      LIMIT $1`,
-    [limit]
+    [limit],
   );
   return result.rows;
 }
@@ -352,7 +352,7 @@ export async function getArticlesNeedingRoundtable() {
        WHERE p2.slug = 'newsday'
      )
      ORDER BY a.created_at DESC
-     LIMIT 20`
+     LIMIT 20`,
   );
   return result.rows;
 }
@@ -368,7 +368,7 @@ function extractTitle(title: any): string {
       return title.a[0]._ || title.a[0] || "Untitled";
     }
     // Handle other nested structures
-    if (title._ ) {
+    if (title._) {
       return title._;
     }
     // Try to stringify and extract text
@@ -382,32 +382,50 @@ function extractTitle(title: any): string {
 // Helper to parse various date formats
 function parseDate(dateStr: string | undefined): Date | null {
   if (!dateStr) return null;
-  
+
   // Try standard Date parsing first
   let date = new Date(dateStr);
   if (!isNaN(date.getTime())) {
     return date;
   }
-  
+
   // Handle Fierce Healthcare format: "Feb 4, 2026 12:56pm"
-  const fierceDateMatch = dateStr.match(/^(\w+)\s+(\d+),\s+(\d+)\s+(\d+):(\d+)(am|pm)$/i);
+  const fierceDateMatch = dateStr.match(
+    /^(\w+)\s+(\d+),\s+(\d+)\s+(\d+):(\d+)(am|pm)$/i,
+  );
   if (fierceDateMatch) {
     const [, month, day, year, hour, minute, ampm] = fierceDateMatch;
     const months: Record<string, number> = {
-      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
-      jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+      jan: 0,
+      feb: 1,
+      mar: 2,
+      apr: 3,
+      may: 4,
+      jun: 5,
+      jul: 6,
+      aug: 7,
+      sep: 8,
+      oct: 9,
+      nov: 10,
+      dec: 11,
     };
     const monthNum = months[month.toLowerCase()];
     let hourNum = parseInt(hour);
-    if (ampm.toLowerCase() === 'pm' && hourNum < 12) hourNum += 12;
-    if (ampm.toLowerCase() === 'am' && hourNum === 12) hourNum = 0;
-    
-    date = new Date(parseInt(year), monthNum, parseInt(day), hourNum, parseInt(minute));
+    if (ampm.toLowerCase() === "pm" && hourNum < 12) hourNum += 12;
+    if (ampm.toLowerCase() === "am" && hourNum === 12) hourNum = 0;
+
+    date = new Date(
+      parseInt(year),
+      monthNum,
+      parseInt(day),
+      hourNum,
+      parseInt(minute),
+    );
     if (!isNaN(date.getTime())) {
       return date;
     }
   }
-  
+
   return null;
 }
 
@@ -420,7 +438,7 @@ export async function scrapeRssFeed(url: string, maxItems: number = 10) {
   });
 
   const feed = await parser.parseURL(url);
-  
+
   return feed.items.slice(0, maxItems).map((item) => {
     const content = item.contentSnippet || item.content || item.summary || "";
     const title = extractTitle(item.title);
@@ -439,9 +457,13 @@ export async function scrapeRssFeed(url: string, maxItems: number = 10) {
 }
 
 // Scrape HTML page
-export async function scrapeHtmlPage(url: string, selector?: string, maxItems: number = 10) {
+export async function scrapeHtmlPage(
+  url: string,
+  selector?: string,
+  maxItems: number = 10,
+) {
   const cheerio = await import("cheerio");
-  
+
   const response = await fetch(url, {
     headers: {
       "User-Agent": "TWH-Intelligence-Agent/1.0",
@@ -465,13 +487,8 @@ export async function scrapeHtmlPage(url: string, selector?: string, maxItems: n
     const title =
       $el.find("h1, h2, h3, .title, .headline").first().text().trim() ||
       $el.text().slice(0, 100).trim();
-    const link =
-      $el.find("a").first().attr("href") ||
-      $el.attr("href") ||
-      url;
-    const fullLink = link.startsWith("http")
-      ? link
-      : new URL(link, url).href;
+    const link = $el.find("a").first().attr("href") || $el.attr("href") || url;
+    const fullLink = link.startsWith("http") ? link : new URL(link, url).href;
     const content = $el.text().trim();
 
     if (title && title.length > 5) {

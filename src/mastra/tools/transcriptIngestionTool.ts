@@ -77,7 +77,9 @@ export const transcriptIngestionTool = createTool({
       let YoutubeTranscript: any;
       try {
         const ytModule = await import("youtube-transcript");
-        YoutubeTranscript = (ytModule as any).YoutubeTranscript || (ytModule as any).default?.YoutubeTranscript;
+        YoutubeTranscript =
+          (ytModule as any).YoutubeTranscript ||
+          (ytModule as any).default?.YoutubeTranscript;
       } catch {
         return {
           videosProcessed: 0,
@@ -97,7 +99,9 @@ export const transcriptIngestionTool = createTool({
             title: item.title,
           });
 
-          const transcriptParts = await YoutubeTranscript.fetchTranscript(item.id);
+          const transcriptParts = await YoutubeTranscript.fetchTranscript(
+            item.id,
+          );
           const fullTranscript = transcriptParts
             .map((part: any) => part.text)
             .join(" ");
@@ -119,14 +123,19 @@ export const transcriptIngestionTool = createTool({
               length: fullTranscript.length,
             });
           } else {
-            logger?.warn("⚠️ [transcriptIngestion] Transcript too short or empty", {
-              videoId: item.id,
-            });
+            logger?.warn(
+              "⚠️ [transcriptIngestion] Transcript too short or empty",
+              {
+                videoId: item.id,
+              },
+            );
           }
         } catch (videoError) {
           errors++;
           const errorMsg =
-            videoError instanceof Error ? videoError.message : String(videoError);
+            videoError instanceof Error
+              ? videoError.message
+              : String(videoError);
           logger?.warn("⚠️ [transcriptIngestion] Failed to process video", {
             videoId: item.id,
             error: errorMsg,

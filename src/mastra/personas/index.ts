@@ -9,7 +9,7 @@ export { PERSONA_PROMPTS };
  */
 export function buildPersonaPrompt(
   slug: string,
-  transcriptExcerpts?: string[]
+  transcriptExcerpts?: string[],
 ): string {
   const basePrompt = PERSONA_PROMPTS[slug];
   if (!basePrompt) {

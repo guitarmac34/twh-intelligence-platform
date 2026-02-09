@@ -20,11 +20,15 @@ export const webScraperTool = createTool({
     url: z.string().describe("The URL to scrape (website or RSS feed)"),
     type: z
       .enum(["rss", "scrape"])
-      .describe("The type of scraping: 'rss' for RSS feeds, 'scrape' for direct HTML scraping"),
+      .describe(
+        "The type of scraping: 'rss' for RSS feeds, 'scrape' for direct HTML scraping",
+      ),
     selector: z
       .string()
       .optional()
-      .describe("CSS selector for direct scraping (required when type is 'scrape')"),
+      .describe(
+        "CSS selector for direct scraping (required when type is 'scrape')",
+      ),
     maxItems: z
       .number()
       .optional()
@@ -42,7 +46,7 @@ export const webScraperTool = createTool({
         content: z.string().optional(),
         contentHash: z.string(),
         sourceName: z.string(),
-      })
+      }),
     ),
     success: z.boolean(),
     error: z.string().optional(),
@@ -64,7 +68,8 @@ export const webScraperTool = createTool({
         const feed = await rssParser.parseURL(context.url);
 
         articles = feed.items.slice(0, context.maxItems).map((item) => {
-          const content = item.contentSnippet || item.content || item.summary || "";
+          const content =
+            item.contentSnippet || item.content || item.summary || "";
           return {
             title: item.title || "Untitled",
             url: item.link || context.url,
@@ -77,11 +82,12 @@ export const webScraperTool = createTool({
         });
       } else if (context.type === "scrape") {
         logger?.info("🌐 [webScraperTool] Direct HTML scraping...");
-        
+
         const response = await fetch(context.url, {
           headers: {
             "User-Agent": "TWH-Intelligence-Agent/1.0",
-            Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            Accept:
+              "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
           },
         });
 
@@ -92,7 +98,8 @@ export const webScraperTool = createTool({
         const html = await response.text();
         const $ = cheerio.load(html);
 
-        const selector = context.selector || "article, .article, .post, .news-item";
+        const selector =
+          context.selector || "article, .article, .post, .news-item";
         const elements = $(selector).slice(0, context.maxItems);
 
         elements.each((_, element) => {
@@ -116,7 +123,10 @@ export const webScraperTool = createTool({
               author: undefined,
               publishedDate: undefined,
               content: content.slice(0, 2000),
-              contentHash: crypto.createHash("md5").update(content).digest("hex"),
+              contentHash: crypto
+                .createHash("md5")
+                .update(content)
+                .digest("hex"),
               sourceName: new URL(context.url).hostname,
             });
           }
@@ -133,8 +143,11 @@ export const webScraperTool = createTool({
         itemCount: articles.length,
       };
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
-      logger?.error("❌ [webScraperTool] Scraping failed", { error: errorMessage });
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
+      logger?.error("❌ [webScraperTool] Scraping failed", {
+        error: errorMessage,
+      });
 
       return {
         articles: [],

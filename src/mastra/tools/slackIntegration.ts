@@ -66,7 +66,7 @@ export async function postViewpointToSlack(
     persona_slug: string;
     viewpoint_text: string;
     key_insights: string[];
-  }>
+  }>,
 ) {
   const slack = getSlackClient();
   if (!slack) return;
@@ -78,7 +78,11 @@ export async function postViewpointToSlack(
     blocks: [
       {
         type: "header",
-        text: { type: "plain_text", text: `📰 ${articleResult.title}`, emoji: true },
+        text: {
+          type: "plain_text",
+          text: `📰 ${articleResult.title}`,
+          emoji: true,
+        },
       },
       {
         type: "section",
@@ -97,14 +101,12 @@ export async function postViewpointToSlack(
     "bill-russell": "🎯",
     "drex-deford": "🔒",
     "sarah-richardson": "👥",
-    "newsday": "📺",
+    newsday: "📺",
   };
 
   for (const vp of viewpoints) {
     const emoji = personaEmojis[vp.persona_slug] || "🗣️";
-    const insights = vp.key_insights
-      .map((i: string) => `• ${i}`)
-      .join("\n");
+    const insights = vp.key_insights.map((i: string) => `• ${i}`).join("\n");
 
     await slack.chat.postMessage({
       channel,

@@ -87,18 +87,18 @@ class ProductionPinoLogger extends MastraLogger {
 // ======================================================================
 export const mastra = new Mastra({
   storage: sharedPostgresStorage,
-  
+
   // Register workflows
   workflows: {
     intelligenceWorkflow,
     viewpointWorkflow,
   },
-  
+
   // Register the TWH Intelligence Researcher Agent
   agents: {
     researcherAgent,
   },
-  
+
   bundler: {
     externals: [
       "@slack/web-api",
@@ -114,7 +114,7 @@ export const mastra = new Mastra({
     ],
     sourcemap: true,
   },
-  
+
   server: {
     host: "0.0.0.0",
     port: 5000,
@@ -170,14 +170,17 @@ export const mastra = new Mastra({
               path.resolve(__dirname, "client", "index.html"),
               path.resolve(__dirname, "..", "client", "index.html"),
             ];
-            
+
             for (const htmlPath of possiblePaths) {
               if (fs.existsSync(htmlPath)) {
                 const html = fs.readFileSync(htmlPath, "utf-8");
                 return c.html(html);
               }
             }
-            return c.text("Frontend not found. Tried: " + possiblePaths.join(", "), 404);
+            return c.text(
+              "Frontend not found. Tried: " + possiblePaths.join(", "),
+              404,
+            );
           } catch (e) {
             return c.text("Frontend error: " + e, 500);
           }
@@ -185,7 +188,7 @@ export const mastra = new Mastra({
       },
     ],
   },
-  
+
   logger:
     process.env.NODE_ENV === "production"
       ? new ProductionPinoLogger({

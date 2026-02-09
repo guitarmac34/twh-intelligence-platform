@@ -8,16 +8,18 @@ export const databaseTool = createTool({
     "Handles all database operations for the TWH Intelligence Platform including storing articles, entities, and summaries.",
 
   inputSchema: z.object({
-    operation: z.enum([
-      "init",
-      "getSources",
-      "checkArticleExists",
-      "saveArticle",
-      "saveEntities",
-      "saveSummary",
-      "updateArticleStatus",
-      "logAction",
-    ]).describe("The database operation to perform"),
+    operation: z
+      .enum([
+        "init",
+        "getSources",
+        "checkArticleExists",
+        "saveArticle",
+        "saveEntities",
+        "saveSummary",
+        "updateArticleStatus",
+        "logAction",
+      ])
+      .describe("The database operation to perform"),
     data: z.any().optional().describe("The data for the operation"),
   }),
 
@@ -38,14 +40,19 @@ export const databaseTool = createTool({
       switch (context.operation) {
         case "init": {
           await initializeDatabase();
-          return { success: true, message: "Database initialized successfully" };
+          return {
+            success: true,
+            message: "Database initialized successfully",
+          };
         }
 
         case "getSources": {
           const result = await query(
-            "SELECT * FROM sources WHERE enabled = true ORDER BY priority DESC"
+            "SELECT * FROM sources WHERE enabled = true ORDER BY priority DESC",
           );
-          logger?.info("📊 [databaseTool] Found sources", { count: result.rows.length });
+          logger?.info("📊 [databaseTool] Found sources", {
+            count: result.rows.length,
+          });
           return { success: true, result: result.rows };
         }
 
@@ -53,11 +60,14 @@ export const databaseTool = createTool({
           const { contentHash, url } = context.data;
           const result = await query(
             "SELECT id FROM articles WHERE content_hash = $1 OR url = $2",
-            [contentHash, url]
+            [contentHash, url],
           );
-          return { 
-            success: true, 
-            result: { exists: result.rows.length > 0, articleId: result.rows[0]?.id } 
+          return {
+            success: true,
+            result: {
+              exists: result.rows.length > 0,
+              articleId: result.rows[0]?.id,
+            },
           };
         }
 
@@ -81,14 +91,17 @@ export const databaseTool = createTool({
               article.content,
               article.contentHash,
               "scraped",
-            ]
+            ],
           );
-          logger?.info("💾 [databaseTool] Article saved", { id: result.rows[0]?.id });
+          logger?.info("💾 [databaseTool] Article saved", {
+            id: result.rows[0]?.id,
+          });
           return { success: true, result: { articleId: result.rows[0]?.id } };
         }
 
         case "saveEntities": {
-          const { articleId, organizations, people, technologies } = context.data;
+          const { articleId, organizations, people, technologies } =
+            context.data;
 
           // Save organizations and link to article
           for (const org of organizations) {
@@ -97,16 +110,16 @@ export const databaseTool = createTool({
                VALUES ($1, $2)
                ON CONFLICT (canonical_name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
                RETURNING id`,
-              [org.canonicalName, org.type]
+              [org.canonicalName, org.type],
             );
             const orgId = orgResult.rows[0]?.id;
-            
+
             if (orgId && articleId) {
               await query(
                 `INSERT INTO article_organizations (article_id, organization_id, confidence)
                  VALUES ($1, $2, $3)
                  ON CONFLICT (article_id, organization_id) DO NOTHING`,
-                [articleId, orgId, org.confidence]
+                [articleId, orgId, org.confidence],
               );
             }
           }
@@ -118,7 +131,7 @@ export const databaseTool = createTool({
             if (person.organization) {
               const orgResult = await query(
                 `SELECT id FROM organizations WHERE canonical_name = $1`,
-                [person.organization]
+                [person.organization],
               );
               orgId = orgResult.rows[0]?.id;
             }
@@ -128,14 +141,14 @@ export const databaseTool = createTool({
                VALUES ($1, $2, $3)
                ON CONFLICT DO NOTHING
                RETURNING id`,
-              [person.name, person.title || null, orgId]
+              [person.name, person.title || null, orgId],
             );
-            
+
             let personId = personResult.rows[0]?.id;
             if (!personId) {
               const existingPerson = await query(
                 `SELECT id FROM people WHERE name = $1`,
-                [person.name]
+                [person.name],
               );
               personId = existingPerson.rows[0]?.id;
             }
@@ -145,7 +158,7 @@ export const databaseTool = createTool({
                 `INSERT INTO article_people (article_id, person_id, confidence)
                  VALUES ($1, $2, $3)
                  ON CONFLICT (article_id, person_id) DO NOTHING`,
-                [articleId, personId, person.confidence]
+                [articleId, personId, person.confidence],
               );
             }
           }
@@ -156,7 +169,7 @@ export const databaseTool = createTool({
             if (tech.vendor) {
               const vendorResult = await query(
                 `SELECT id FROM organizations WHERE canonical_name = $1`,
-                [tech.vendor]
+                [tech.vendor],
               );
               vendorId = vendorResult.rows[0]?.id;
             }
@@ -166,7 +179,7 @@ export const databaseTool = createTool({
                VALUES ($1, $2, $3)
                ON CONFLICT (name) DO UPDATE SET updated_at = CURRENT_TIMESTAMP
                RETURNING id`,
-              [tech.canonicalName, tech.category, vendorId]
+              [tech.canonicalName, tech.category, vendorId],
             );
             const techId = techResult.rows[0]?.id;
 
@@ -175,7 +188,7 @@ export const databaseTool = createTool({
                 `INSERT INTO article_technologies (article_id, technology_id, confidence)
                  VALUES ($1, $2, $3)
                  ON CONFLICT (article_id, technology_id) DO NOTHING`,
-                [articleId, techId, tech.confidence]
+                [articleId, techId, tech.confidence],
               );
             }
           }
@@ -183,7 +196,7 @@ export const databaseTool = createTool({
           // Update article status
           await query(
             `UPDATE articles SET processing_status = 'extracted', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-            [articleId]
+            [articleId],
           );
 
           logger?.info("💾 [databaseTool] Entities saved", {
@@ -195,8 +208,9 @@ export const databaseTool = createTool({
         }
 
         case "saveSummary": {
-          const { articleId, summary, takeaways, tags, relevanceScore } = context.data;
-          
+          const { articleId, summary, takeaways, tags, relevanceScore } =
+            context.data;
+
           await query(
             `INSERT INTO summaries (article_id, short_summary, key_takeaways, topic_tags, relevance_score)
              VALUES ($1, $2, $3, $4, $5)
@@ -206,13 +220,13 @@ export const databaseTool = createTool({
                topic_tags = EXCLUDED.topic_tags,
                relevance_score = EXCLUDED.relevance_score,
                updated_at = CURRENT_TIMESTAMP`,
-            [articleId, summary, takeaways, tags, relevanceScore]
+            [articleId, summary, takeaways, tags, relevanceScore],
           );
 
           // Update article status
           await query(
             `UPDATE articles SET processing_status = 'summarized', updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
-            [articleId]
+            [articleId],
           );
 
           logger?.info("💾 [databaseTool] Summary saved", { articleId });
@@ -223,7 +237,7 @@ export const databaseTool = createTool({
           const { articleId, status } = context.data;
           await query(
             `UPDATE articles SET processing_status = $1, updated_at = CURRENT_TIMESTAMP WHERE id = $2`,
-            [status, articleId]
+            [status, articleId],
           );
           return { success: true, message: "Article status updated" };
         }
@@ -233,16 +247,20 @@ export const databaseTool = createTool({
           await query(
             `INSERT INTO agent_logs (agent_name, action, status, details, run_id)
              VALUES ($1, $2, $3, $4, $5)`,
-            [agentName, action, status, details || {}, runId || null]
+            [agentName, action, status, details || {}, runId || null],
           );
           return { success: true, message: "Action logged" };
         }
 
         default:
-          return { success: false, error: `Unknown operation: ${context.operation}` };
+          return {
+            success: false,
+            error: `Unknown operation: ${context.operation}`,
+          };
       }
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : String(error);
+      const errorMessage =
+        error instanceof Error ? error.message : String(error);
       logger?.error("❌ [databaseTool] Operation failed", {
         operation: context.operation,
         error: errorMessage,
