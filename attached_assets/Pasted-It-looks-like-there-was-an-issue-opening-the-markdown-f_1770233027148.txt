@@ -1,0 +1,496 @@
+It looks like there was an issue opening the markdown file. Let me verify it exists and offer you a better format:The file exists. Would you prefer I convert it to a different format that's easier to open?Here's the complete Replit prompt for you to copy:
+
+---
+
+# TWH Intelligence Platform - Replit Agent Prompt
+
+## Project Overview
+
+Build a **Role-Based Autonomous Agent** (Level 4 autonomy) that owns the responsibility of continuously monitoring healthcare IT news sources, scraping content, extracting structured intelligence, and storing it for analysis. This is an MVP/pilot designed to run autonomously for 3 days to validate the approach.
+
+---
+
+## What We're Building
+
+**Product Name:** TWH (This Week Health) Intelligence Agent
+
+**Core Function:** An autonomous agent that:
+1. Monitors a curated list of healthcare IT news sources (RSS feeds, websites, press releases)
+2. Scrapes new articles and content as they appear
+3. Extracts structured entities (organizations, people, technologies)
+4. Generates AI-powered summaries with healthcare IT context
+5. Stores everything in a searchable database
+6. Provides an admin dashboard for monitoring and quality review
+
+**This is NOT a chatbot.** This is a background intelligence-gathering agent that runs continuously without human intervention, with human accountability through the admin dashboard.
+
+---
+
+## Step 1: Project Setup
+
+Create a new project with the following structure:
+
+```
+/twh-intelligence-agent
+├── /src
+│   ├── /agents
+│   │   ├── orchestrator.py      # Main agent coordinator
+│   │   ├── scraper_agent.py     # Web scraping specialist
+│   │   ├── extractor_agent.py   # Entity extraction specialist
+│   │   └── summarizer_agent.py  # AI summarization specialist
+│   ├── /services
+│   │   ├── scheduler.py         # Cron-based task scheduling
+│   │   ├── database.py          # Database operations
+│   │   └── llm_router.py        # LLM provider routing (cost optimization)
+│   ├── /models
+│   │   └── schemas.py           # Data models for articles, entities, etc.
+│   └── /utils
+│       ├── config.py            # Configuration management
+│       └── logging.py           # Structured logging
+├── /admin
+│   ├── dashboard.py             # Admin web interface
+│   └── /templates               # Dashboard HTML templates
+├── /data
+│   └── sources.json             # List of monitored sources
+├── requirements.txt
+├── .env.example
+└── README.md
+```
+
+**Checkpoint after Step 1:** Verify project structure is created correctly.
+
+---
+
+## Step 2: Define Data Sources
+
+The agent should research and compile a list of high-value healthcare IT news sources. Start with these categories:
+
+### Source Categories to Monitor
+
+1. **Healthcare IT News Sites**
+   - Healthcare IT News (healthcareitnews.com)
+   - HIMSS (himss.org/news)
+   - Becker's Health IT (beckershospitalreview.com/healthcare-information-technology)
+   - Health Data Management
+   - CHIME (chimecentral.org)
+
+2. **Health System Press Releases**
+   - Major health system newsrooms (HCA, CommonSpirit, Ascension, Kaiser, etc.)
+   - PRNewswire healthcare IT releases
+   - BusinessWire healthcare announcements
+
+3. **LinkedIn Monitoring** (if feasible)
+   - Healthcare IT influencer posts
+   - CIO/CMIO/CNIO content
+
+4. **Industry Sources**
+   - KLAS Research announcements
+   - Epic/Cerner/Oracle Health news
+   - Major vendor press releases
+
+### Source Configuration Schema
+
+```json
+{
+  "sources": [
+    {
+      "name": "Healthcare IT News",
+      "url": "https://www.healthcareitnews.com",
+      "type": "rss|sitemap|scrape",
+      "rss_url": "https://www.healthcareitnews.com/rss.xml",
+      "scrape_selector": ".article-content",
+      "check_frequency_minutes": 15,
+      "priority": "high",
+      "enabled": true
+    }
+  ]
+}
+```
+
+**Checkpoint after Step 2:** Sources are configured and accessible.
+
+---
+
+## Step 3: Build the Scraper Agent
+
+Create a scraper agent that:
+
+1. **Monitors sources on a schedule** (configurable frequency per source)
+2. **Detects new content** by comparing URLs/titles against stored articles
+3. **Extracts content** using appropriate methods:
+   - RSS feeds: Parse feed, extract article URLs, scrape full content
+   - Sitemaps: Monitor for new URLs
+   - Direct scraping: Use CSS selectors for article content
+4. **Handles failures gracefully** with retry logic and error logging
+5. **Respects rate limits** to avoid being blocked
+
+### Scraper Requirements
+
+- Use `httpx` or `aiohttp` for async HTTP requests
+- Use `BeautifulSoup` or `selectolax` for HTML parsing
+- Use `feedparser` for RSS feeds
+- Implement exponential backoff for retries
+- Log all scraping activity with timestamps
+
+### Output Schema for Scraped Articles
+
+```python
+class ScrapedArticle:
+    source_name: str
+    source_url: str
+    article_url: str
+    title: str
+    author: str | None
+    published_date: datetime | None
+    scraped_date: datetime
+    raw_content: str
+    content_hash: str  # For deduplication
+    scrape_status: str  # success, partial, failed
+```
+
+**Checkpoint after Step 3:** Scraper successfully retrieves articles from at least 3 sources.
+
+---
+
+## Step 4: Build the Entity Extractor Agent
+
+Create an extractor agent that processes scraped articles and extracts:
+
+### Entity Types
+
+1. **Organizations**
+   - Hospital systems (e.g., "HCA Healthcare", "CommonSpirit Health")
+   - Vendors (e.g., "Epic", "Oracle Health", "Microsoft")
+   - Payers, agencies, startups
+   - Normalize names to canonical forms (e.g., "Epic Systems" -> "Epic")
+
+2. **People**
+   - Executives (CIO, CMIO, CNIO, CEO, CFO)
+   - Authors and quoted individuals
+   - Include title/role when available
+
+3. **Technologies**
+   - Products and platforms (e.g., "Epic Cosmos", "Azure")
+   - Standards (e.g., "FHIR", "HL7")
+   - Categories (EHR, cybersecurity, AI/ML, interoperability)
+
+### Extraction Requirements
+
+- Use LLM for intelligent extraction (not just regex)
+- Maintain a canonical dictionary for entity normalization
+- Handle aliases (e.g., "Cerner" = "Oracle Health")
+- Extract relationships when clear (e.g., "John Smith, CIO of HCA")
+- Confidence scoring for extracted entities
+
+### Output Schema
+
+```python
+class ExtractedEntities:
+    article_id: str
+    organizations: list[Organization]
+    people: list[Person]
+    technologies: list[Technology]
+    extraction_date: datetime
+    extraction_confidence: float
+```
+
+**Checkpoint after Step 4:** Entity extraction works correctly on sample articles.
+
+---
+
+## Step 5: Build the Summarizer Agent
+
+Create a summarizer agent that generates:
+
+### Summary Types
+
+1. **Article Summary** (2-3 sentences)
+   - What happened
+   - Who is involved
+   - Why it matters for healthcare IT
+
+2. **Key Takeaways** (bullet points)
+   - Main points for sales/marketing teams
+   - Implications for the market
+
+3. **Categorization Tags**
+   - Topic tags (cybersecurity, AI, EHR, interoperability, etc.)
+   - Relevance score (1-10) for healthcare IT vendors
+
+### Summarization Requirements
+
+- Use LLM with healthcare IT context in the prompt
+- Generate summaries that would be useful for sales teams
+- Include "so what" analysis, not just "what happened"
+- Apply the "This Week Health filter" - practical, vendor-relevant insights
+
+### Output Schema
+
+```python
+class ArticleSummary:
+    article_id: str
+    short_summary: str  # 2-3 sentences
+    key_takeaways: list[str]
+    topic_tags: list[str]
+    relevance_score: int  # 1-10
+    summary_date: datetime
+```
+
+**Checkpoint after Step 5:** Summaries are high quality and actionable.
+
+---
+
+## Step 6: Build the Orchestrator
+
+Create an orchestrator that coordinates all agents:
+
+### Orchestrator Responsibilities
+
+1. **Scheduling**: Run scraping jobs at configured intervals
+2. **Pipeline Management**: Scrape -> Extract -> Summarize -> Store
+3. **State Management**: Track what has been processed
+4. **Error Handling**: Retry failed jobs, alert on repeated failures
+5. **Resource Management**: Optimize LLM token usage
+
+### Autonomy Features
+
+The orchestrator should "own the responsibility" of keeping intelligence fresh:
+
+- Run continuously without manual intervention
+- Self-recover from errors
+- Log decisions and actions for accountability
+- Send status updates (email/webhook) on significant events
+
+### LLM Cost Optimization
+
+Route tasks to appropriate model tiers:
+- **Tier 1 (Cheap)**: Deduplication, basic classification
+- **Tier 2 (Medium)**: Entity extraction, tagging
+- **Tier 3 (Expensive)**: Summary generation, complex analysis
+
+**Checkpoint after Step 6:** Full pipeline runs end-to-end autonomously.
+
+---
+
+## Step 7: Build the Admin Dashboard
+
+Create a web-based admin interface for monitoring and quality control.
+
+### Dashboard Requirements
+
+**Page 1: Ingestion Monitoring**
+- Real-time feed of newly scraped articles
+- Source health status (last successful scrape, error rate)
+- Articles per source over time (chart)
+- Failed scrapes with error details
+- Manual trigger to re-scrape a source
+
+**Page 2: Output Quality Review**
+- List of recent articles with summaries
+- Side-by-side view: original content vs. AI summary
+- Entity extraction review (approve/correct entities)
+- Quality rating input (for training feedback)
+- Flag articles for manual review
+
+**Page 3: Data Management**
+- Add/edit/disable data sources
+- View and edit canonical entity dictionaries
+- Export data (CSV/JSON)
+- Database statistics (total articles, entities, etc.)
+
+**Page 4: System Status**
+- Agent status (running/stopped/error)
+- Recent logs
+- LLM token usage and costs
+- Performance metrics
+
+### Technical Requirements
+
+- Use a lightweight framework (Flask, FastAPI with Jinja2, or Streamlit)
+- Authentication required (simple username/password is fine for MVP)
+- Mobile-responsive design
+- Real-time updates where possible (WebSocket or polling)
+
+**Checkpoint after Step 7:** Admin dashboard is functional and shows real data.
+
+---
+
+## Step 8: Database Schema
+
+Design a database to store all intelligence data.
+
+### Required Tables/Collections
+
+```sql
+-- Articles table
+articles (
+    id UUID PRIMARY KEY,
+    source_id UUID REFERENCES sources,
+    url TEXT UNIQUE,
+    title TEXT,
+    author TEXT,
+    published_date TIMESTAMP,
+    scraped_date TIMESTAMP,
+    raw_content TEXT,
+    content_hash TEXT,
+    processing_status TEXT  -- scraped, extracted, summarized, reviewed
+)
+
+-- Entities tables
+organizations (
+    id UUID PRIMARY KEY,
+    canonical_name TEXT UNIQUE,
+    aliases TEXT[],
+    type TEXT,  -- health_system, vendor, payer, startup, agency
+    metadata JSONB
+)
+
+people (
+    id UUID PRIMARY KEY,
+    name TEXT,
+    title TEXT,
+    organization_id UUID REFERENCES organizations,
+    metadata JSONB
+)
+
+technologies (
+    id UUID PRIMARY KEY,
+    name TEXT UNIQUE,
+    category TEXT,  -- EHR, cybersecurity, AI, interoperability
+    vendor_id UUID REFERENCES organizations,
+    metadata JSONB
+)
+
+-- Junction tables for article-entity relationships
+article_organizations (article_id, organization_id, mention_type, confidence)
+article_people (article_id, person_id, role_in_article, confidence)
+article_technologies (article_id, technology_id, context, confidence)
+
+-- Summaries table
+summaries (
+    id UUID PRIMARY KEY,
+    article_id UUID REFERENCES articles,
+    short_summary TEXT,
+    key_takeaways TEXT[],
+    topic_tags TEXT[],
+    relevance_score INT,
+    created_date TIMESTAMP,
+    quality_rating INT,  -- admin feedback
+    reviewed BOOLEAN
+)
+
+-- Sources configuration
+sources (
+    id UUID PRIMARY KEY,
+    name TEXT,
+    url TEXT,
+    type TEXT,
+    config JSONB,
+    enabled BOOLEAN,
+    last_check TIMESTAMP,
+    error_count INT
+)
+
+-- Logs table
+agent_logs (
+    id UUID PRIMARY KEY,
+    timestamp TIMESTAMP,
+    agent_name TEXT,
+    action TEXT,
+    status TEXT,
+    details JSONB
+)
+```
+
+**Checkpoint after Step 8:** Database is created and migrations work.
+
+---
+
+## Success Metrics for MVP
+
+The 3-day pilot will be evaluated on:
+
+| Metric | Target | How to Measure |
+|--------|--------|----------------|
+| **Scrape Accuracy** | >95% | Articles scraped without errors / total attempts |
+| **Entity Extraction Accuracy** | >85% | Manually review sample of 50 articles |
+| **Summary Quality** | >80% useful | Admin ratings on summaries |
+| **Categorization Accuracy** | >90% | Tags match manual classification |
+| **Uptime** | >99% | Agent running without crashes |
+| **Data Volume** | 500+ articles | Total articles collected in 3 days |
+
+---
+
+## Environment Variables Required
+
+```env
+# LLM Providers
+OPENAI_API_KEY=your_key
+ANTHROPIC_API_KEY=your_key
+
+# Database
+DATABASE_URL=your_connection_string
+
+# Admin Auth
+ADMIN_USERNAME=admin
+ADMIN_PASSWORD=secure_password
+
+# Notifications (optional)
+SLACK_WEBHOOK_URL=your_webhook
+EMAIL_SMTP_HOST=smtp.example.com
+
+# Feature Flags
+LLM_PROVIDER=openai  # or anthropic, or auto
+LOG_LEVEL=INFO
+```
+
+---
+
+## Important Constraints
+
+1. **Respect robots.txt** - Do not scrape sites that disallow it
+2. **Rate limiting** - Maximum 1 request per second per domain
+3. **Error handling** - Never crash; log and continue
+4. **Data privacy** - Do not store personal information beyond public sources
+5. **Token costs** - Implement usage tracking and alerts for LLM costs
+
+---
+
+## Getting Started
+
+After creating this project:
+
+1. Set up the database and run migrations
+2. Configure at least 5 data sources
+3. Test the scraper on one source manually
+4. Run the full pipeline on a small batch
+5. Review output quality in the admin dashboard
+6. Enable autonomous scheduling
+7. Monitor for 3 days
+
+---
+
+## Questions to Answer During Build
+
+As you build, document answers to:
+
+1. Which sources provide the highest quality content?
+2. What entity extraction patterns work best?
+3. How accurate are the AI summaries?
+4. What is the optimal scraping frequency?
+5. What is the token cost per article processed?
+
+---
+
+*This prompt follows Replit Agent best practices: clarity, specificity, step-by-step breakdown with checkpoints, and clear success criteria.*
+
+---
+
+You can copy everything above and paste it directly into Replit Agent. The prompt is structured with:
+
+- **Clear project overview** so Replit understands the "why"
+- **8 sequential steps** with checkpoints for validation
+- **Specific code schemas** so it knows exactly what to build
+- **Admin dashboard requirements** for monitoring and quality control
+- **Success metrics** so you can evaluate the 3-day pilot
+- **Constraints** to prevent common pitfalls
