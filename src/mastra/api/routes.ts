@@ -8,7 +8,7 @@ import { saveArticle, saveEntities, saveSummary, saveViewpoint, getViewpointsFor
 import { buildPersonaPrompt, getIndividualPersonaSlugs } from "../personas";
 import { getSlackClient, extractUrlsFromSlackMessage, postViewpointToSlack } from "../tools/slackIntegration";
 
-type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "OPTIONS" | "HEAD" | "ALL";
+type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "ALL";
 
 const SOURCE_FILES = [
   { name: "intelligenceWorkflow.ts", path: "src/mastra/workflows/intelligenceWorkflow.ts", description: "Main workflow with 5-step process" },
