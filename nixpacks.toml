@@ -1,0 +1,14 @@
+[phases.setup]
+nixPkgs = ["nodejs_20"]
+
+[phases.install]
+cmds = ["npm install"]
+
+[phases.build]
+cmds = [
+  "npm run build",
+  "cp -r client .mastra/output/client 2>/dev/null || true"
+]
+
+[start]
+cmd = "node .mastra/output/index.mjs"
