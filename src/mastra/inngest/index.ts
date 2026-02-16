@@ -80,7 +80,8 @@ export function registerApiRoute<P extends string>(
           if (event.data.runId) {
             headers["x-mastra-run-id"] = event.data.runId;
           }
-          const response = await fetch(`http://localhost:5000${path}`, {
+          const port = process.env.PORT || "4111";
+          const response = await fetch(`http://localhost:${port}${path}`, {
             method: event.data.method,
             headers,
             body: event.data.body,
@@ -194,12 +195,15 @@ export function inngestServe({
   inngest: Inngest;
 }): ReturnType<typeof originalInngestServe> {
   let serveHost: string | undefined = undefined;
+  const port = process.env.PORT || "4111";
   if (process.env.NODE_ENV === "production") {
-    if (process.env.REPLIT_DOMAINS) {
+    if (process.env.RAILWAY_PUBLIC_DOMAIN) {
+      serveHost = `https://${process.env.RAILWAY_PUBLIC_DOMAIN}`;
+    } else if (process.env.REPLIT_DOMAINS) {
       serveHost = `https://${process.env.REPLIT_DOMAINS.split(",")[0]}`;
     }
   } else {
-    serveHost = "http://localhost:5000";
+    serveHost = `http://localhost:${port}`;
   }
   return originalInngestServe({
     mastra,
