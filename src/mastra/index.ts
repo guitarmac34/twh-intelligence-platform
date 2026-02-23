@@ -167,6 +167,8 @@ export const mastra = new Mastra({
         handler: async (c: any) => {
           try {
             // Try multiple paths for dev and production
+            // ESM-compatible __dirname alternative
+            const currentDir = path.dirname(new URL(import.meta.url).pathname);
             const possiblePaths = [
               // Production: client folder copied to .mastra/output
               path.join(process.cwd(), "client", "index.html"),
@@ -175,8 +177,8 @@ export const mastra = new Mastra({
               // Dev fallback: workspace root
               "/home/runner/workspace/client/index.html",
               // Additional production fallbacks
-              path.resolve(__dirname, "client", "index.html"),
-              path.resolve(__dirname, "..", "client", "index.html"),
+              path.resolve(currentDir, "client", "index.html"),
+              path.resolve(currentDir, "..", "client", "index.html"),
             ];
             
             for (const htmlPath of possiblePaths) {
