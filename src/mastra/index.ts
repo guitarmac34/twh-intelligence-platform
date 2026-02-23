@@ -11,6 +11,7 @@ import * as path from "path";
 import { sharedPostgresStorage } from "./storage";
 import { inngest, inngestServe } from "./inngest";
 import { apiRoutes } from "./api/routes";
+import { initializeDatabase } from "./db/operations";
 
 // ======================================================================
 // IMPORT AGENTS AND WORKFLOWS
@@ -206,6 +207,11 @@ export const mastra = new Mastra({
           name: "TWH-Intelligence",
           level: "info",
         }),
+});
+
+// Initialize database schema and seed sources/personas on startup
+initializeDatabase().catch((err) => {
+  console.error("Failed to initialize database on startup:", err);
 });
 
 // Note: Multiple workflows and agents are supported in this build.
