@@ -310,10 +310,10 @@ async function seedDefaultSources(client: any) {
       priority: "high",
     },
     {
-      name: "Healthcare IT News - Cybersecurity",
-      url: "https://www.healthcareitnews.com",
+      name: "HIPAA Journal",
+      url: "https://www.hipaajournal.com",
       type: "rss",
-      rss_url: "https://www.healthcareitnews.com/rss/cybersecurity.xml",
+      rss_url: "https://www.hipaajournal.com/feed/",
       priority: "high",
     },
     {
@@ -399,7 +399,7 @@ async function seedDefaultSources(client: any) {
       name: "KFF Health News",
       url: "https://kffhealthnews.org",
       type: "rss",
-      rss_url: "https://khn.org/feed/",
+      rss_url: "https://kffhealthnews.org/feed/",
       priority: "medium",
     },
     {

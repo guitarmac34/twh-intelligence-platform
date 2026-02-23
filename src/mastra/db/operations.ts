@@ -820,14 +820,15 @@ export async function scrapeRssFeed(url: string, maxItems: number = 25) {
 
   const feed = await parser.parseURL(url);
   
-  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const maxAgeDays = parseInt(process.env.ARTICLE_MAX_AGE_DAYS || "30", 10);
+  const cutoffDate = new Date(Date.now() - maxAgeDays * 24 * 60 * 60 * 1000);
 
   return feed.items
     .filter((item) => {
       const rawDate = item.pubDate || item.isoDate;
       if (!rawDate) return true; // Keep items without dates
       const parsed = parseDate(rawDate);
-      return !parsed || parsed >= sevenDaysAgo;
+      return !parsed || parsed >= cutoffDate;
     })
     .slice(0, maxItems)
     .map((item) => {
