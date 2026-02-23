@@ -162,18 +162,20 @@ export async function saveSummary(
   summary: string,
   takeaways: string[],
   tags: string[],
-  relevanceScore: number
+  relevanceScore: number,
+  qualityRating?: number
 ) {
   await query(
-    `INSERT INTO summaries (article_id, short_summary, key_takeaways, topic_tags, relevance_score)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO summaries (article_id, short_summary, key_takeaways, topic_tags, relevance_score, quality_rating)
+     VALUES ($1, $2, $3, $4, $5, $6)
      ON CONFLICT (article_id) DO UPDATE SET
        short_summary = EXCLUDED.short_summary,
        key_takeaways = EXCLUDED.key_takeaways,
        topic_tags = EXCLUDED.topic_tags,
        relevance_score = EXCLUDED.relevance_score,
+       quality_rating = COALESCE(EXCLUDED.quality_rating, summaries.quality_rating),
        updated_at = CURRENT_TIMESTAMP`,
-    [articleId, summary, takeaways, tags, relevanceScore]
+    [articleId, summary, takeaways, tags, relevanceScore, qualityRating || null]
   );
 
   await query(
@@ -357,6 +359,403 @@ export async function getArticlesNeedingRoundtable() {
   return result.rows;
 }
 
+// Increment error count on a source
+export async function incrementSourceErrorCount(sourceId: string) {
+  await query(
+    `UPDATE sources SET error_count = error_count + 1, updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
+    [sourceId]
+  );
+}
+
+// ======================================================================
+// PERSONA ARTICLE SCORING
+// ======================================================================
+
+// Save persona relevance scores for an article (bulk insert)
+export async function savePersonaScores(
+  articleId: string,
+  scores: Array<{ personaSlug: string; relevanceScore: number; relevanceReason: string }>
+) {
+  for (const score of scores) {
+    await query(
+      `INSERT INTO persona_article_scores (article_id, persona_slug, relevance_score, relevance_reason)
+       VALUES ($1, $2, $3, $4)
+       ON CONFLICT (article_id, persona_slug) DO UPDATE SET
+         relevance_score = EXCLUDED.relevance_score,
+         relevance_reason = EXCLUDED.relevance_reason`,
+      [articleId, score.personaSlug, score.relevanceScore, score.relevanceReason]
+    );
+  }
+}
+
+// Get top articles for a persona, ranked by relevance
+export async function getTopArticlesForPersona(
+  personaSlug: string,
+  days: number = 1,
+  limit: number = 7
+) {
+  const result = await query(
+    `SELECT a.id, a.title, a.url, a.published_date, a.created_at,
+            s.short_summary, s.key_takeaways, s.topic_tags, s.relevance_score as overall_relevance,
+            pas.relevance_score as persona_relevance, pas.relevance_reason,
+            src.name as source_name
+     FROM persona_article_scores pas
+     JOIN articles a ON pas.article_id = a.id
+     LEFT JOIN summaries s ON a.id = s.article_id
+     LEFT JOIN sources src ON a.source_id = src.id
+     WHERE pas.persona_slug = $1
+       AND a.created_at >= NOW() - INTERVAL '1 day' * $2
+     ORDER BY pas.relevance_score DESC, a.created_at DESC
+     LIMIT $3`,
+    [personaSlug, days, limit]
+  );
+  return result.rows;
+}
+
+// Get articles with persona scores, with optional filtering
+export async function getArticlesWithPersonaScores(filters: {
+  personaSlug?: string;
+  minRelevance?: number;
+  days?: number;
+  tag?: string;
+  source?: string;
+  page?: number;
+  limit?: number;
+}) {
+  const conditions: string[] = [];
+  const params: any[] = [];
+  let paramCount = 0;
+
+  if (filters.personaSlug) {
+    paramCount++;
+    conditions.push(`pas.persona_slug = $${paramCount}`);
+    params.push(filters.personaSlug);
+  }
+  if (filters.minRelevance) {
+    paramCount++;
+    conditions.push(`pas.relevance_score >= $${paramCount}`);
+    params.push(filters.minRelevance);
+  }
+  if (filters.days) {
+    paramCount++;
+    conditions.push(`a.created_at >= NOW() - INTERVAL '1 day' * $${paramCount}`);
+    params.push(filters.days);
+  }
+  if (filters.tag) {
+    paramCount++;
+    conditions.push(`$${paramCount} = ANY(s.topic_tags)`);
+    params.push(filters.tag);
+  }
+  if (filters.source) {
+    paramCount++;
+    conditions.push(`src.name ILIKE $${paramCount}`);
+    params.push(`%${filters.source}%`);
+  }
+
+  const whereClause = conditions.length > 0 ? `WHERE ${conditions.join(" AND ")}` : "";
+  const pageLimit = filters.limit || 20;
+  const offset = ((filters.page || 1) - 1) * pageLimit;
+
+  paramCount++;
+  const limitParam = paramCount;
+  params.push(pageLimit);
+  paramCount++;
+  const offsetParam = paramCount;
+  params.push(offset);
+
+  const result = await query(
+    `SELECT a.id, a.title, a.url, a.published_date, a.created_at,
+            s.short_summary, s.topic_tags, s.relevance_score as overall_relevance,
+            pas.relevance_score as persona_relevance, pas.relevance_reason, pas.persona_slug,
+            src.name as source_name
+     FROM articles a
+     LEFT JOIN persona_article_scores pas ON a.id = pas.article_id
+     LEFT JOIN summaries s ON a.id = s.article_id
+     LEFT JOIN sources src ON a.source_id = src.id
+     ${whereClause}
+     ORDER BY COALESCE(pas.relevance_score, s.relevance_score, 0) DESC, a.created_at DESC
+     LIMIT $${limitParam} OFFSET $${offsetParam}`,
+    params
+  );
+  return result.rows;
+}
+
+// ======================================================================
+// DIGEST OPERATIONS
+// ======================================================================
+
+// Save a digest
+export async function saveDigest(digest: {
+  personaSlug: string;
+  digestDate: string;
+  subjectLine: string;
+  digestHtml: string;
+  digestText: string;
+  articleIds: string[];
+  highlights: string[];
+  modelUsed?: string;
+}) {
+  const result = await query(
+    `INSERT INTO digests (persona_slug, digest_date, subject_line, digest_html, digest_text, article_ids, highlights, model_used)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+     ON CONFLICT (persona_slug, digest_date) DO UPDATE SET
+       subject_line = EXCLUDED.subject_line,
+       digest_html = EXCLUDED.digest_html,
+       digest_text = EXCLUDED.digest_text,
+       article_ids = EXCLUDED.article_ids,
+       highlights = EXCLUDED.highlights,
+       model_used = EXCLUDED.model_used
+     RETURNING id`,
+    [
+      digest.personaSlug,
+      digest.digestDate,
+      digest.subjectLine,
+      digest.digestHtml,
+      digest.digestText,
+      digest.articleIds,
+      digest.highlights,
+      digest.modelUsed || "gpt-4o",
+    ]
+  );
+  return result.rows[0]?.id;
+}
+
+// Get latest digest for persona
+export async function getLatestDigest(personaSlug: string) {
+  const result = await query(
+    `SELECT * FROM digests WHERE persona_slug = $1 ORDER BY digest_date DESC LIMIT 1`,
+    [personaSlug]
+  );
+  return result.rows[0] || null;
+}
+
+// Get digest history
+export async function getDigestHistory(personaSlug: string, days: number = 7) {
+  const result = await query(
+    `SELECT id, persona_slug, digest_date, subject_line, highlights, model_used, created_at
+     FROM digests WHERE persona_slug = $1 AND digest_date >= CURRENT_DATE - $2
+     ORDER BY digest_date DESC`,
+    [personaSlug, days]
+  );
+  return result.rows;
+}
+
+// ======================================================================
+// SUBSCRIBER OPERATIONS
+// ======================================================================
+
+export async function addSubscriber(email: string, personaSlugs: string[]) {
+  const result = await query(
+    `INSERT INTO digest_subscribers (email, persona_slugs)
+     VALUES ($1, $2)
+     ON CONFLICT (email) DO UPDATE SET
+       persona_slugs = EXCLUDED.persona_slugs,
+       active = true,
+       updated_at = CURRENT_TIMESTAMP
+     RETURNING *`,
+    [email, personaSlugs]
+  );
+  return result.rows[0];
+}
+
+export async function removeSubscriber(email: string) {
+  await query(
+    `UPDATE digest_subscribers SET active = false, updated_at = CURRENT_TIMESTAMP WHERE email = $1`,
+    [email]
+  );
+}
+
+export async function getActiveSubscribers() {
+  const result = await query(
+    `SELECT * FROM digest_subscribers WHERE active = true ORDER BY email`
+  );
+  return result.rows;
+}
+
+export async function getSubscribersByPersona(personaSlug: string) {
+  const result = await query(
+    `SELECT * FROM digest_subscribers WHERE active = true AND $1 = ANY(persona_slugs)`,
+    [personaSlug]
+  );
+  return result.rows;
+}
+
+// ======================================================================
+// ACCOUNT OPERATIONS (Sales Enablement)
+// ======================================================================
+
+export async function getAccounts() {
+  const result = await query(
+    `SELECT a.*,
+            o.canonical_name as organization_name,
+            (SELECT COUNT(*) FROM account_articles WHERE account_id = a.id) as article_count
+     FROM accounts a
+     LEFT JOIN organizations o ON a.organization_id = o.id
+     ORDER BY a.updated_at DESC`
+  );
+  return result.rows;
+}
+
+export async function getAccountById(id: string) {
+  const result = await query(
+    `SELECT a.*,
+            o.canonical_name as organization_name
+     FROM accounts a
+     LEFT JOIN organizations o ON a.organization_id = o.id
+     WHERE a.id = $1`,
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
+export async function createAccount(account: {
+  name: string;
+  type: string;
+  industrySegment?: string;
+  size?: string;
+  region?: string;
+  keyContacts?: any[];
+  notes?: string;
+  owner?: string;
+}) {
+  // Try to find matching organization
+  const orgResult = await query(
+    `SELECT id FROM organizations WHERE canonical_name ILIKE $1 LIMIT 1`,
+    [account.name]
+  );
+  const organizationId = orgResult.rows[0]?.id || null;
+
+  const result = await query(
+    `INSERT INTO accounts (organization_id, name, type, industry_segment, size, region, key_contacts, notes, owner)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     RETURNING *`,
+    [
+      organizationId,
+      account.name,
+      account.type,
+      account.industrySegment || null,
+      account.size || null,
+      account.region || null,
+      JSON.stringify(account.keyContacts || []),
+      account.notes || null,
+      account.owner || null,
+    ]
+  );
+  return result.rows[0];
+}
+
+export async function updateAccount(id: string, updates: Record<string, any>) {
+  const result = await query(
+    `UPDATE accounts SET
+       name = COALESCE($1, name),
+       type = COALESCE($2, type),
+       industry_segment = COALESCE($3, industry_segment),
+       size = COALESCE($4, size),
+       region = COALESCE($5, region),
+       key_contacts = COALESCE($6, key_contacts),
+       notes = COALESCE($7, notes),
+       owner = COALESCE($8, owner),
+       updated_at = CURRENT_TIMESTAMP
+     WHERE id = $9
+     RETURNING *`,
+    [
+      updates.name,
+      updates.type,
+      updates.industrySegment,
+      updates.size,
+      updates.region,
+      updates.keyContacts ? JSON.stringify(updates.keyContacts) : null,
+      updates.notes,
+      updates.owner,
+      id,
+    ]
+  );
+  return result.rows[0];
+}
+
+export async function deleteAccount(id: string) {
+  await query(`DELETE FROM accounts WHERE id = $1`, [id]);
+}
+
+export async function getAccountArticles(accountId: string) {
+  const result = await query(
+    `SELECT a.id, a.title, a.url, a.published_date, a.created_at,
+            s.short_summary, s.topic_tags, s.relevance_score,
+            aa.match_type, aa.relevance_note, aa.created_at as linked_at,
+            src.name as source_name
+     FROM account_articles aa
+     JOIN articles a ON aa.article_id = a.id
+     LEFT JOIN summaries s ON a.id = s.article_id
+     LEFT JOIN sources src ON a.source_id = src.id
+     WHERE aa.account_id = $1
+     ORDER BY a.created_at DESC`,
+    [accountId]
+  );
+  return result.rows;
+}
+
+export async function linkArticleToAccount(accountId: string, articleId: string, matchType: string, relevanceNote?: string) {
+  await query(
+    `INSERT INTO account_articles (account_id, article_id, match_type, relevance_note)
+     VALUES ($1, $2, $3, $4)
+     ON CONFLICT (account_id, article_id) DO NOTHING`,
+    [accountId, articleId, matchType, relevanceNote || null]
+  );
+}
+
+// Auto-link: find accounts matching extracted organizations
+export async function autoLinkArticleToAccounts(articleId: string, organizationNames: string[]) {
+  for (const orgName of organizationNames) {
+    // Match by organization_id or fuzzy name match
+    const accounts = await query(
+      `SELECT a.id FROM accounts a
+       LEFT JOIN organizations o ON a.organization_id = o.id
+       WHERE o.canonical_name ILIKE $1 OR a.name ILIKE $1`,
+      [orgName]
+    );
+    for (const account of accounts.rows) {
+      await linkArticleToAccount(account.id, articleId, "auto", `Matched organization: ${orgName}`);
+    }
+  }
+}
+
+// Full-text search across articles
+export async function searchArticles(searchQuery: string, personaSlug?: string, limit: number = 20) {
+  if (personaSlug) {
+    const result = await query(
+      `SELECT a.id, a.title, a.url, a.published_date, a.created_at,
+              s.short_summary, s.topic_tags, s.relevance_score,
+              pas.relevance_score as persona_relevance,
+              ts_rank(to_tsvector('english', COALESCE(a.title, '') || ' ' || COALESCE(a.raw_content, '')), plainto_tsquery('english', $1)) as search_rank,
+              src.name as source_name
+       FROM articles a
+       LEFT JOIN summaries s ON a.id = s.article_id
+       LEFT JOIN persona_article_scores pas ON a.id = pas.article_id AND pas.persona_slug = $2
+       LEFT JOIN sources src ON a.source_id = src.id
+       WHERE to_tsvector('english', COALESCE(a.title, '') || ' ' || COALESCE(a.raw_content, '')) @@ plainto_tsquery('english', $1)
+       ORDER BY search_rank DESC
+       LIMIT $3`,
+      [searchQuery, personaSlug, limit]
+    );
+    return result.rows;
+  }
+
+  const result = await query(
+    `SELECT a.id, a.title, a.url, a.published_date, a.created_at,
+            s.short_summary, s.topic_tags, s.relevance_score,
+            ts_rank(to_tsvector('english', COALESCE(a.title, '') || ' ' || COALESCE(a.raw_content, '')), plainto_tsquery('english', $1)) as search_rank,
+            src.name as source_name
+     FROM articles a
+     LEFT JOIN summaries s ON a.id = s.article_id
+     LEFT JOIN sources src ON a.source_id = src.id
+     WHERE to_tsvector('english', COALESCE(a.title, '') || ' ' || COALESCE(a.raw_content, '')) @@ plainto_tsquery('english', $1)
+     ORDER BY search_rank DESC
+     LIMIT $2`,
+    [searchQuery, limit]
+  );
+  return result.rows;
+}
+
 // Helper to extract text from potentially nested RSS title objects
 function extractTitle(title: any): string {
   if (typeof title === "string") {
@@ -412,7 +811,7 @@ function parseDate(dateStr: string | undefined): Date | null {
 }
 
 // Scrape RSS feed
-export async function scrapeRssFeed(url: string, maxItems: number = 10) {
+export async function scrapeRssFeed(url: string, maxItems: number = 25) {
   const Parser = (await import("rss-parser")).default;
   const parser = new Parser({
     timeout: 30000,
@@ -421,25 +820,35 @@ export async function scrapeRssFeed(url: string, maxItems: number = 10) {
 
   const feed = await parser.parseURL(url);
   
-  return feed.items.slice(0, maxItems).map((item) => {
-    const content = item.contentSnippet || item.content || item.summary || "";
-    const title = extractTitle(item.title);
-    const rawDate = item.pubDate || item.isoDate;
-    const parsedDate = parseDate(rawDate);
-    return {
-      title,
-      url: item.link || url,
-      author: item.creator || item.author || undefined,
-      publishedDate: parsedDate ? parsedDate.toISOString() : undefined,
-      content: content,
-      contentHash: crypto.createHash("md5").update(content).digest("hex"),
-      sourceName: feed.title || new URL(url).hostname,
-    };
-  });
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+  return feed.items
+    .filter((item) => {
+      const rawDate = item.pubDate || item.isoDate;
+      if (!rawDate) return true; // Keep items without dates
+      const parsed = parseDate(rawDate);
+      return !parsed || parsed >= sevenDaysAgo;
+    })
+    .slice(0, maxItems)
+    .map((item) => {
+      const content = item.contentSnippet || item.content || item.summary || "";
+      const title = extractTitle(item.title);
+      const rawDate = item.pubDate || item.isoDate;
+      const parsedDate = parseDate(rawDate);
+      return {
+        title,
+        url: item.link || url,
+        author: item.creator || item.author || undefined,
+        publishedDate: parsedDate ? parsedDate.toISOString() : undefined,
+        content: content,
+        contentHash: crypto.createHash("md5").update(content).digest("hex"),
+        sourceName: feed.title || new URL(url).hostname,
+      };
+    });
 }
 
 // Scrape HTML page
-export async function scrapeHtmlPage(url: string, selector?: string, maxItems: number = 10) {
+export async function scrapeHtmlPage(url: string, selector?: string, maxItems: number = 25) {
   const cheerio = await import("cheerio");
   
   const response = await fetch(url, {
@@ -480,7 +889,7 @@ export async function scrapeHtmlPage(url: string, selector?: string, maxItems: n
         url: fullLink,
         author: undefined,
         publishedDate: undefined,
-        content: content.slice(0, 2000),
+        content,
         contentHash: crypto.createHash("md5").update(content).digest("hex"),
         sourceName: new URL(url).hostname,
       });

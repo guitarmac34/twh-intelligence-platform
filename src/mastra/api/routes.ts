@@ -4,7 +4,14 @@ import * as path from "path";
 import crypto from "crypto";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText } from "ai";
-import { saveArticle, saveEntities, saveSummary, saveViewpoint, getViewpointsForArticle } from "../db/operations";
+import {
+  saveArticle, saveEntities, saveSummary, saveViewpoint, getViewpointsForArticle,
+  getLatestDigest, getDigestHistory,
+  addSubscriber, removeSubscriber, getActiveSubscribers,
+  getAccounts, getAccountById, createAccount, updateAccount, deleteAccount,
+  getAccountArticles, linkArticleToAccount,
+  getArticlesWithPersonaScores, searchArticles,
+} from "../db/operations";
 import { buildPersonaPrompt, getIndividualPersonaSlugs } from "../personas";
 import { getSlackClient, extractUrlsFromSlackMessage, postViewpointToSlack } from "../tools/slackIntegration";
 
@@ -1265,6 +1272,319 @@ Generate the email brief in this JSON format:
       );
 
       return c.json({ transcripts: transcripts.rows });
+    },
+  },
+  // ======================================================================
+  // DIGEST ENDPOINTS
+  // ======================================================================
+  {
+    path: "/api/digests/:personaSlug/latest",
+    method: "GET" as const,
+    handler: async (c: any) => {
+      const personaSlug = c.req.param("personaSlug");
+      const digest = await getLatestDigest(personaSlug);
+      if (!digest) {
+        return c.json({ error: "No digest found" }, 404);
+      }
+      return c.json({ digest });
+    },
+  },
+  {
+    path: "/api/digests/:personaSlug",
+    method: "GET" as const,
+    handler: async (c: any) => {
+      const personaSlug = c.req.param("personaSlug");
+      const days = parseInt(c.req.query("days") || "7", 10);
+      const digests = await getDigestHistory(personaSlug, days);
+      return c.json({ digests });
+    },
+  },
+  {
+    path: "/api/digests/generate",
+    method: "POST" as const,
+    handler: async (c: any) => {
+      const mastra = c.get("mastra");
+      const logger = mastra?.getLogger();
+      logger?.info("🚀 [API] Manual digest generation requested");
+
+      try {
+        const workflow = mastra?.getWorkflow("digestWorkflow");
+        if (workflow) {
+          const result = await workflow.start({ inputData: {} });
+          return c.json({ success: true, message: "Digest workflow triggered", runId: result?.runId });
+        } else {
+          return c.json({ success: false, message: "Digest workflow not found" }, 404);
+        }
+      } catch (error: any) {
+        return c.json({ success: false, message: error.message }, 500);
+      }
+    },
+  },
+  // ======================================================================
+  // SUBSCRIBER ENDPOINTS
+  // ======================================================================
+  {
+    path: "/api/subscribers",
+    method: "GET" as const,
+    handler: async (c: any) => {
+      const subscribers = await getActiveSubscribers();
+      return c.json({ subscribers });
+    },
+  },
+  {
+    path: "/api/subscribers",
+    method: "POST" as const,
+    handler: async (c: any) => {
+      const body = await c.req.json();
+      if (!body.email || !body.personaSlugs || !Array.isArray(body.personaSlugs)) {
+        return c.json({ error: "Required: email, personaSlugs (array)" }, 400);
+      }
+      const subscriber = await addSubscriber(body.email, body.personaSlugs);
+      return c.json({ success: true, subscriber });
+    },
+  },
+  {
+    path: "/api/subscribers/:email",
+    method: "DELETE" as const,
+    handler: async (c: any) => {
+      const email = decodeURIComponent(c.req.param("email"));
+      await removeSubscriber(email);
+      return c.json({ success: true });
+    },
+  },
+  // ======================================================================
+  // ACCOUNT ENDPOINTS (Sales Enablement)
+  // ======================================================================
+  {
+    path: "/api/accounts",
+    method: "GET" as const,
+    handler: async (c: any) => {
+      const accounts = await getAccounts();
+      return c.json({ accounts });
+    },
+  },
+  {
+    path: "/api/accounts",
+    method: "POST" as const,
+    handler: async (c: any) => {
+      const body = await c.req.json();
+      if (!body.name || !body.type) {
+        return c.json({ error: "Required: name, type" }, 400);
+      }
+      const account = await createAccount(body);
+      return c.json({ success: true, account });
+    },
+  },
+  {
+    path: "/api/accounts/:id",
+    method: "GET" as const,
+    handler: async (c: any) => {
+      const id = c.req.param("id");
+      const account = await getAccountById(id);
+      if (!account) {
+        return c.json({ error: "Account not found" }, 404);
+      }
+      const articles = await getAccountArticles(id);
+      return c.json({ account, articles });
+    },
+  },
+  {
+    path: "/api/accounts/:id",
+    method: "PUT" as const,
+    handler: async (c: any) => {
+      const id = c.req.param("id");
+      const body = await c.req.json();
+      const account = await updateAccount(id, body);
+      if (!account) {
+        return c.json({ error: "Account not found" }, 404);
+      }
+      return c.json({ success: true, account });
+    },
+  },
+  {
+    path: "/api/accounts/:id",
+    method: "DELETE" as const,
+    handler: async (c: any) => {
+      const id = c.req.param("id");
+      await deleteAccount(id);
+      return c.json({ success: true });
+    },
+  },
+  {
+    path: "/api/accounts/:id/articles",
+    method: "GET" as const,
+    handler: async (c: any) => {
+      const id = c.req.param("id");
+      const articles = await getAccountArticles(id);
+      return c.json({ articles });
+    },
+  },
+  {
+    path: "/api/accounts/:id/articles",
+    method: "POST" as const,
+    handler: async (c: any) => {
+      const id = c.req.param("id");
+      const body = await c.req.json();
+      if (!body.articleId) {
+        return c.json({ error: "Required: articleId" }, 400);
+      }
+      await linkArticleToAccount(id, body.articleId, "manual", body.relevanceNote);
+      return c.json({ success: true });
+    },
+  },
+  {
+    path: "/api/accounts/:id/brief",
+    method: "POST" as const,
+    handler: async (c: any) => {
+      const mastra = c.get("mastra");
+      const logger = mastra?.getLogger();
+      const id = c.req.param("id");
+
+      try {
+        const account = await getAccountById(id);
+        if (!account) {
+          return c.json({ error: "Account not found" }, 404);
+        }
+
+        const articles = await getAccountArticles(id);
+        if (articles.length === 0) {
+          return c.json({ error: "No articles linked to this account" }, 400);
+        }
+
+        const openaiClient = createOpenAI({
+          baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+        });
+
+        // Get viewpoints for linked articles
+        const articleDetails = articles.slice(0, 10).map((a: any) =>
+          `- "${a.title}" (${a.source_name || "Unknown"}, ${a.relevance_score || "N/A"}/10 relevance)
+    Summary: ${a.short_summary || "N/A"}
+    Tags: ${(a.topic_tags || []).join(", ")}
+    ${a.relevance_note ? `Match: ${a.relevance_note}` : ""}`
+        ).join("\n");
+
+        const briefPrompt = `Generate a comprehensive sales intelligence brief for the following account.
+
+## ACCOUNT
+Name: ${account.name}
+Type: ${account.type}
+${account.industry_segment ? `Segment: ${account.industry_segment}` : ""}
+${account.size ? `Size: ${account.size}` : ""}
+${account.region ? `Region: ${account.region}` : ""}
+${account.notes ? `Notes: ${account.notes}` : ""}
+
+## RECENT NEWS & ARTICLES (${articles.length} total)
+${articleDetails}
+
+Generate a sales intelligence brief that includes:
+1. Executive Summary — What's happening with this organization
+2. Recent News Digest — Key developments from linked articles
+3. Competitive Dynamics — Other vendors or competitors mentioned alongside them
+4. Potential Pain Points — Problems or challenges surfaced in articles
+5. Suggested Talk Tracks — 3-5 conversation starters grounded in real news
+6. Key Contacts — People mentioned in articles related to this organization
+
+Respond in JSON:
+{
+  "executiveSummary": "2-3 paragraph executive overview",
+  "recentNews": [{"headline": "...", "summary": "...", "date": "..."}],
+  "competitiveDynamics": "Analysis of competitive landscape",
+  "painPoints": ["pain point 1", "pain point 2"],
+  "talkTracks": [{"topic": "...", "opener": "...", "context": "..."}],
+  "keyContacts": [{"name": "...", "title": "...", "context": "..."}],
+  "generatedAt": "${new Date().toISOString()}"
+}`;
+
+        const response = await generateText({
+          model: openaiClient("gpt-4o"),
+          prompt: briefPrompt,
+          temperature: 0.5,
+        });
+
+        const jsonMatch = response.text.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) {
+          return c.json({ error: "Failed to generate brief" }, 500);
+        }
+
+        const brief = JSON.parse(jsonMatch[0]);
+
+        logger?.info("✅ [API] Account brief generated", { accountId: id, accountName: account.name });
+
+        return c.json({
+          success: true,
+          account: { id: account.id, name: account.name, type: account.type },
+          brief,
+          articleCount: articles.length,
+        });
+      } catch (error: any) {
+        logger?.error("❌ [API] Account brief failed", { error: error.message });
+        return c.json({ success: false, error: error.message }, 500);
+      }
+    },
+  },
+  // ======================================================================
+  // SEARCH & FILTERING ENDPOINTS
+  // ======================================================================
+  {
+    path: "/api/search",
+    method: "GET" as const,
+    handler: async (c: any) => {
+      const q = c.req.query("q");
+      const persona = c.req.query("persona");
+      if (!q) {
+        return c.json({ error: "Required: q (search query)" }, 400);
+      }
+      const results = await searchArticles(q, persona, 20);
+      return c.json({ results, query: q, persona: persona || null });
+    },
+  },
+  {
+    path: "/api/articles/filtered",
+    method: "GET" as const,
+    handler: async (c: any) => {
+      const filters = {
+        personaSlug: c.req.query("persona") || undefined,
+        minRelevance: c.req.query("minRelevance") ? parseInt(c.req.query("minRelevance"), 10) : undefined,
+        days: c.req.query("days") ? parseInt(c.req.query("days"), 10) : undefined,
+        tag: c.req.query("tag") || undefined,
+        source: c.req.query("source") || undefined,
+        page: c.req.query("page") ? parseInt(c.req.query("page"), 10) : 1,
+        limit: c.req.query("limit") ? parseInt(c.req.query("limit"), 10) : 20,
+      };
+      const articles = await getArticlesWithPersonaScores(filters);
+      return c.json({ articles, filters });
+    },
+  },
+  // ======================================================================
+  // HEALTH CHECK
+  // ======================================================================
+  {
+    path: "/api/health",
+    method: "GET" as const,
+    handler: async (c: any) => {
+      try {
+        const dbCheck = await query("SELECT 1 as ok");
+        const stats = await query(`
+          SELECT
+            (SELECT COUNT(*) FROM articles) as articles,
+            (SELECT COUNT(*) FROM sources WHERE enabled = true) as sources,
+            (SELECT COUNT(*) FROM personas WHERE enabled = true) as personas
+        `);
+        return c.json({
+          status: "healthy",
+          database: "connected",
+          stats: stats.rows[0],
+          timestamp: new Date().toISOString(),
+        });
+      } catch (error: any) {
+        return c.json({
+          status: "unhealthy",
+          database: "disconnected",
+          error: error.message,
+          timestamp: new Date().toISOString(),
+        }, 503);
+      }
     },
   },
   // ======================================================================

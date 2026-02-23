@@ -18,6 +18,7 @@ import { apiRoutes } from "./api/routes";
 import { researcherAgent } from "./agents/researcherAgent";
 import { intelligenceWorkflow } from "./workflows/intelligenceWorkflow";
 import { viewpointWorkflow } from "./workflows/viewpointWorkflow";
+import { digestWorkflow } from "./workflows/digestWorkflow";
 import { registerCronTrigger } from "../triggers/cronTriggers";
 
 // ======================================================================
@@ -36,6 +37,12 @@ registerCronTrigger({
 registerCronTrigger({
   cronExpression: process.env.VIEWPOINT_CRON_EXPRESSION || "30 */4 * * *",
   workflow: viewpointWorkflow,
+});
+
+// Digest workflow: generate and deliver daily email digests (default: 6 AM ET weekdays = 10:00 UTC)
+registerCronTrigger({
+  cronExpression: process.env.DIGEST_CRON_EXPRESSION || "0 10 * * 1-5",
+  workflow: digestWorkflow,
 });
 
 // ======================================================================
@@ -92,6 +99,7 @@ export const mastra = new Mastra({
   workflows: {
     intelligenceWorkflow,
     viewpointWorkflow,
+    digestWorkflow,
   },
   
   // Register the TWH Intelligence Researcher Agent

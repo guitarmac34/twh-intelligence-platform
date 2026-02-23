@@ -11,6 +11,9 @@ import {
   logAction,
   scrapeRssFeed,
   scrapeHtmlPage,
+  incrementSourceErrorCount,
+  savePersonaScores,
+  autoLinkArticleToAccounts,
 } from "../db/operations";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText } from "ai";
@@ -116,34 +119,62 @@ const monitorSourcesStep = createStep({
     const allArticles: any[] = [];
     let sourcesProcessed = 0;
 
-    for (const source of inputData.sources) {
-      try {
-        logger?.info(`📡 [Step 2] Scraping source: ${source.name}`);
+    // Rate limit: max 3 concurrent scrapes
+    const pLimit = (await import("p-limit")).default;
+    const limit = pLimit(3);
 
-        let articles: any[] = [];
-        
-        if (source.type === "rss" && source.rss_url) {
-          articles = await scrapeRssFeed(source.rss_url, 10);
-        } else {
-          articles = await scrapeHtmlPage(source.url, source.scrape_selector, 10);
-        }
-
-        if (articles.length > 0) {
-          const articlesWithSource = articles.map((article: any) => ({
-            ...article,
-            sourceId: source.id,
-          }));
-          allArticles.push(...articlesWithSource);
-          sourcesProcessed++;
-          logger?.info(`✅ [Step 2] Scraped ${articles.length} articles from ${source.name}`);
-        } else {
-          logger?.warn(`⚠️ [Step 2] No articles from ${source.name}`);
-        }
-      } catch (error) {
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        logger?.error(`❌ [Step 2] Error scraping ${source.name}`, { error: errorMessage });
+    const scrapeSource = async (source: any, index: number) => {
+      // Add 1-second delay between source starts (beyond first batch)
+      if (index >= 3) {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
       }
-    }
+
+      const maxRetries = 2;
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          logger?.info(`📡 [Step 2] Scraping source: ${source.name}${attempt > 0 ? ` (retry ${attempt})` : ""}`);
+
+          let articles: any[] = [];
+
+          if (source.type === "rss" && source.rss_url) {
+            articles = await scrapeRssFeed(source.rss_url, 25);
+          } else {
+            articles = await scrapeHtmlPage(source.url, source.scrape_selector, 25);
+          }
+
+          if (articles.length > 0) {
+            const articlesWithSource = articles.map((article: any) => ({
+              ...article,
+              sourceId: source.id,
+            }));
+            allArticles.push(...articlesWithSource);
+            sourcesProcessed++;
+            logger?.info(`✅ [Step 2] Scraped ${articles.length} articles from ${source.name}`);
+          } else {
+            logger?.warn(`⚠️ [Step 2] No articles from ${source.name}`);
+          }
+          return; // Success — exit retry loop
+        } catch (error) {
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          if (attempt < maxRetries) {
+            const backoffMs = 1000 * Math.pow(2, attempt);
+            logger?.warn(`⚠️ [Step 2] Retrying ${source.name} in ${backoffMs}ms`, { error: errorMessage, attempt });
+            await new Promise((resolve) => setTimeout(resolve, backoffMs));
+          } else {
+            logger?.error(`❌ [Step 2] Error scraping ${source.name} after ${maxRetries + 1} attempts`, { error: errorMessage });
+            try {
+              await incrementSourceErrorCount(source.id);
+            } catch { /* best-effort */ }
+          }
+        }
+      }
+    };
+
+    await Promise.all(
+      inputData.sources.map((source: any, index: number) =>
+        limit(() => scrapeSource(source, index))
+      )
+    );
 
     logger?.info("✅ [Step 2] Source monitoring complete", {
       totalArticles: allArticles.length,
@@ -276,6 +307,7 @@ Respond with JSON only:
 }`;
 
         let entitiesExtracted = 0;
+        let extractedOrgNames: string[] = [];
         try {
           const extractResponse = await generateText({
             model: openai("gpt-4o-mini"),
@@ -326,6 +358,7 @@ Respond with JSON only:
             // Save entities
             await saveEntities(articleId, normalizedOrgs, normalizedPeople, normalizedTech);
             entitiesExtracted = normalizedOrgs.length + normalizedPeople.length + normalizedTech.length;
+            extractedOrgNames = normalizedOrgs.map((o: any) => o.canonicalName);
           }
         } catch (e) {
           logger?.warn("⚠️ [Step 4] Entity extraction failed", { error: String(e) });
@@ -342,6 +375,7 @@ Respond with JSON only:
 2. 3-5 key takeaways for healthcare IT sales/marketing teams
 3. Topic tags (choose from: cybersecurity, AI, EHR, interoperability, telehealth, analytics, cloud, regulation, M&A, partnership, funding, leadership)
 4. A relevance score 1-10 (10 = highly relevant for healthcare IT vendors)
+5. A quality rating 1-10 for the article's information density, source credibility, and actionability
 
 ARTICLE TITLE: ${article.title}
 
@@ -353,7 +387,8 @@ Respond in this exact JSON format:
   "summary": "2-3 sentence summary here",
   "takeaways": ["takeaway 1", "takeaway 2", "takeaway 3"],
   "tags": ["tag1", "tag2"],
-  "relevanceScore": 8
+  "relevanceScore": 8,
+  "qualityRating": 7
 }`,
             },
           ]);
@@ -366,7 +401,8 @@ Respond in this exact JSON format:
               summaryData.summary,
               summaryData.takeaways || [],
               summaryData.tags || [],
-              summaryData.relevanceScore || 5
+              summaryData.relevanceScore || 5,
+              summaryData.qualityRating
             );
             hasSummary = true;
           }
@@ -379,6 +415,7 @@ Respond in this exact JSON format:
           title: article.title,
           entitiesExtracted,
           hasSummary,
+          organizations: extractedOrgNames,
         });
 
         logger?.info(`✅ [Step 4] Processed article`, {
@@ -410,7 +447,117 @@ Respond in this exact JSON format:
   },
 });
 
-// Step 5: Store results and log completion
+// All persona slugs for scoring
+const ALL_PERSONA_SLUGS = [
+  "bill-russell", "drex-deford", "sarah-richardson",
+  "output-cio", "output-ciso", "output-sales-rep", "output-general-hit",
+];
+
+// Step 5: Score articles for persona relevance + auto-link to accounts
+const scoreAndLinkStep = createStep({
+  id: "score-and-link",
+  description: "Scores each processed article for persona relevance and auto-links to sales accounts",
+
+  inputSchema: z.object({
+    processedArticles: z.array(z.any()),
+    success: z.boolean(),
+    totalProcessed: z.number(),
+    errors: z.number(),
+  }),
+
+  outputSchema: z.object({
+    processedArticles: z.array(z.any()),
+    success: z.boolean(),
+    totalProcessed: z.number(),
+    errors: z.number(),
+    articlesScored: z.number(),
+    accountsLinked: z.number(),
+  }),
+
+  execute: async ({ inputData, mastra }) => {
+    const logger = mastra?.getLogger();
+    logger?.info("🎯 [Step 5] Scoring articles for persona relevance...");
+
+    let articlesScored = 0;
+    let accountsLinked = 0;
+
+    for (const article of inputData.processedArticles) {
+      if (!article.hasSummary || !article.articleId) continue;
+
+      // Persona scoring via GPT-4o-mini
+      try {
+        const scoreResponse = await generateText({
+          model: openai("gpt-4o-mini"),
+          prompt: `Rate the relevance of this healthcare IT article for each persona (1-10) and give a one-sentence reason.
+
+ARTICLE: ${article.title}
+
+PERSONAS:
+- bill-russell: CEO/CIO perspective — strategic IT decisions, vendor evaluation, operational stability vs innovation
+- drex-deford: CISO perspective — cybersecurity, risk, patient safety, zero-trust, threat landscape
+- sarah-richardson: CIO/leadership perspective — workforce transformation, change management, leadership development
+- output-cio: Chief Information Officer — technology decisions, budget, digital transformation
+- output-ciso: Chief Information Security Officer — security posture, risk management, compliance
+- output-sales-rep: Healthcare IT vendor sales rep — buyer intelligence, competitive dynamics, positioning
+- output-general-hit: General healthcare IT professional — industry trends, career relevance
+
+Respond in JSON:
+{
+  "scores": [
+    {"persona": "bill-russell", "score": 8, "reason": "..."},
+    {"persona": "drex-deford", "score": 5, "reason": "..."},
+    {"persona": "sarah-richardson", "score": 6, "reason": "..."},
+    {"persona": "output-cio", "score": 8, "reason": "..."},
+    {"persona": "output-ciso", "score": 5, "reason": "..."},
+    {"persona": "output-sales-rep", "score": 7, "reason": "..."},
+    {"persona": "output-general-hit", "score": 7, "reason": "..."}
+  ]
+}`,
+          temperature: 0.2,
+        });
+
+        const jsonMatch = scoreResponse.text.match(/\{[\s\S]*\}/);
+        if (jsonMatch) {
+          const parsed = JSON.parse(jsonMatch[0]);
+          const scores = (parsed.scores || [])
+            .filter((s: any) => ALL_PERSONA_SLUGS.includes(s.persona))
+            .map((s: any) => ({
+              personaSlug: s.persona,
+              relevanceScore: Math.min(10, Math.max(1, Math.round(s.score))),
+              relevanceReason: s.reason || "",
+            }));
+
+          if (scores.length > 0) {
+            await savePersonaScores(article.articleId, scores);
+            articlesScored++;
+          }
+        }
+      } catch (e) {
+        logger?.warn("⚠️ [Step 5] Persona scoring failed", { articleId: article.articleId, error: String(e) });
+      }
+
+      // Auto-link to accounts based on extracted organizations
+      try {
+        if (article.organizations && article.organizations.length > 0) {
+          await autoLinkArticleToAccounts(article.articleId, article.organizations);
+          accountsLinked++;
+        }
+      } catch (e) {
+        logger?.warn("⚠️ [Step 5] Account auto-link failed", { error: String(e) });
+      }
+    }
+
+    logger?.info("✅ [Step 5] Scoring and linking complete", { articlesScored, accountsLinked });
+
+    return {
+      ...inputData,
+      articlesScored,
+      accountsLinked,
+    };
+  },
+});
+
+// Step 6: Store results and log completion
 const storeResultsStep = createStep({
   id: "store-results",
   description: "Logs the workflow completion and stores final statistics",
@@ -420,6 +567,8 @@ const storeResultsStep = createStep({
     success: z.boolean(),
     totalProcessed: z.number(),
     errors: z.number(),
+    articlesScored: z.number().optional(),
+    accountsLinked: z.number().optional(),
   }),
 
   outputSchema: z.object({
@@ -500,5 +649,6 @@ export const intelligenceWorkflow = createWorkflow({
   .then(monitorSourcesStep as any)
   .then(filterContentStep as any)
   .then(processArticlesStep as any)
+  .then(scoreAndLinkStep as any)
   .then(storeResultsStep as any)
   .commit();

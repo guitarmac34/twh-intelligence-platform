@@ -112,47 +112,58 @@ const generateViewpointsStep = createStep({
     let viewpointsGenerated = 0;
     let errors = 0;
 
+    const allAnalystSlugs = ["bill-russell", "drex-deford", "sarah-richardson"];
+
     for (const article of inputData.articles) {
       const topicTags = article.topic_tags || [];
+      const relevanceScore = article.relevance_score || 0;
 
-      // Route to the best analyst based on article topics
-      const analystSlug = routeToAnalyst(topicTags);
-      const analyst = personaMap.get(analystSlug) as any;
+      // For high-relevance articles (>= 8): generate all 3 analyst viewpoints
+      // For others (6-7): route to single best analyst
+      const targetAnalysts = relevanceScore >= 8
+        ? allAnalystSlugs
+        : [routeToAnalyst(topicTags)];
 
-      if (!analyst) {
-        logger?.warn(`⚠️ [Viewpoint Step 2] Analyst not found: ${analystSlug}`);
-        errors++;
-        continue;
-      }
+      let primaryAnalystSlug = targetAnalysts[0];
+      let primaryViewpointText = "";
 
-      logger?.info(`📝 [Viewpoint Step 2] Routing "${article.title.slice(0, 50)}..." → ${analyst.name}`);
+      for (const analystSlug of targetAnalysts) {
+        const analyst = personaMap.get(analystSlug) as any;
 
-      try {
-        // Retrieve transcript excerpts for voice authenticity
-        let transcriptExcerpts: string[] = [];
-        try {
-          const transcripts = await getTranscriptsForPersona(
-            analyst.id,
-            topicTags
-          );
-          transcriptExcerpts = transcripts
-            .slice(0, 3)
-            .map((t: any) => {
-              const excerpts = t.processed_excerpts || [];
-              return excerpts
-                .slice(0, 2)
-                .map((e: any) => e.quote || e.text || "")
-                .filter(Boolean)
-                .join(" ");
-            })
-            .filter(Boolean);
-        } catch {
-          // Transcripts are optional enhancement
+        if (!analyst) {
+          logger?.warn(`⚠️ [Viewpoint Step 2] Analyst not found: ${analystSlug}`);
+          errors++;
+          continue;
         }
 
-        const systemPrompt = buildPersonaPrompt(analystSlug, transcriptExcerpts);
+        logger?.info(`📝 [Viewpoint Step 2] Routing "${article.title.slice(0, 50)}..." → ${analyst.name}${targetAnalysts.length > 1 ? " (multi-analyst)" : ""}`);
 
-        const userPrompt = `Analyze this healthcare IT article from your unique perspective:
+        try {
+          // Retrieve transcript excerpts for voice authenticity
+          let transcriptExcerpts: string[] = [];
+          try {
+            const transcripts = await getTranscriptsForPersona(
+              analyst.id,
+              topicTags
+            );
+            transcriptExcerpts = transcripts
+              .slice(0, 3)
+              .map((t: any) => {
+                const excerpts = t.processed_excerpts || [];
+                return excerpts
+                  .slice(0, 2)
+                  .map((e: any) => e.quote || e.text || "")
+                  .filter(Boolean)
+                  .join(" ");
+              })
+              .filter(Boolean);
+          } catch {
+            // Transcripts are optional enhancement
+          }
+
+          const systemPrompt = buildPersonaPrompt(analystSlug, transcriptExcerpts);
+
+          const userPrompt = `Analyze this healthcare IT article from your unique perspective:
 
 ARTICLE TITLE: ${article.title}
 
@@ -170,52 +181,63 @@ Respond with valid JSON only:
   "confidenceScore": 0.85
 }`;
 
-        const response = await generateText({
-          model: openai("gpt-4o-mini"),
-          system: systemPrompt,
-          prompt: userPrompt,
-          temperature: 0.7,
-        });
+          const response = await generateText({
+            model: openai("gpt-4o-mini"),
+            system: systemPrompt,
+            prompt: userPrompt,
+            temperature: 0.7,
+          });
 
-        const jsonMatch = response.text.match(/\{[\s\S]*\}/);
-        if (!jsonMatch) {
-          throw new Error("Failed to parse viewpoint response");
+          const jsonMatch = response.text.match(/\{[\s\S]*\}/);
+          if (!jsonMatch) {
+            throw new Error("Failed to parse viewpoint response");
+          }
+
+          const result = JSON.parse(jsonMatch[0]);
+
+          await saveViewpoint({
+            articleId: article.id,
+            personaId: analyst.id,
+            viewpointText: result.viewpoint,
+            keyInsights: result.keyInsights || [],
+            confidenceScore: result.confidenceScore || 0.8,
+            modelUsed: "gpt-4o-mini",
+            generationMetadata: { routedTo: analystSlug, topicTags, multiAnalyst: targetAnalysts.length > 1 },
+          });
+
+          viewpointsGenerated++;
+
+          // Track primary analyst for brief generation
+          if (analystSlug === primaryAnalystSlug) {
+            primaryViewpointText = result.viewpoint;
+          }
+
+          logger?.info(`✅ [Viewpoint Step 2] ${analyst.name} viewpoint generated`, {
+            articleId: article.id,
+          });
+        } catch (error) {
+          errors++;
+          const errorMessage =
+            error instanceof Error ? error.message : String(error);
+          logger?.error(
+            `❌ [Viewpoint Step 2] Failed for ${analystSlug}`,
+            { error: errorMessage, articleId: article.id }
+          );
         }
+      }
 
-        const result = JSON.parse(jsonMatch[0]);
-
-        await saveViewpoint({
-          articleId: article.id,
-          personaId: analyst.id,
-          viewpointText: result.viewpoint,
-          keyInsights: result.keyInsights || [],
-          confidenceScore: result.confidenceScore || 0.8,
-          modelUsed: "gpt-4o-mini",
-          generationMetadata: { routedTo: analystSlug, topicTags },
-        });
-
-        viewpointsGenerated++;
+      // Use the primary (routed) analyst's viewpoint for downstream brief generation
+      const primaryAnalyst = personaMap.get(primaryAnalystSlug) as any;
+      if (primaryAnalyst && primaryViewpointText) {
         processedArticles.push({
           articleId: article.id,
           title: article.title,
-          analystSlug,
-          analystName: analyst.name,
-          viewpointText: result.viewpoint,
+          analystSlug: primaryAnalystSlug,
+          analystName: primaryAnalyst.name,
+          viewpointText: primaryViewpointText,
           summary: article.short_summary,
           topicTags,
         });
-
-        logger?.info(`✅ [Viewpoint Step 2] ${analyst.name} viewpoint generated`, {
-          articleId: article.id,
-        });
-      } catch (error) {
-        errors++;
-        const errorMessage =
-          error instanceof Error ? error.message : String(error);
-        logger?.error(
-          `❌ [Viewpoint Step 2] Failed for ${analystSlug}`,
-          { error: errorMessage, articleId: article.id }
-        );
       }
     }
 
