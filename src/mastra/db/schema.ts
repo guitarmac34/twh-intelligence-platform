@@ -295,8 +295,13 @@ export async function initializeDatabase() {
 async function seedDefaultSources(client: any) {
   console.log("🌱 [Database] Seeding default healthcare IT sources...");
   
+  // All sources verified working as of Feb 2026.
+  // Each RSS URL tested with curl — returns valid XML.
+  // Scrape sources tested — returns valid HTML with working selectors.
+  // Sources behind Cloudflare/DataDome (HIMSS, CHIME, EHR Intelligence,
+  // Modern Healthcare) excluded — they block server-side fetches.
   const defaultSources = [
-    // === EXISTING CORE SOURCES ===
+    // === TIER 1: Core Healthcare IT (verified RSS feeds) ===
     {
       name: "Healthcare IT News",
       url: "https://www.healthcareitnews.com",
@@ -305,46 +310,17 @@ async function seedDefaultSources(client: any) {
       priority: "high",
     },
     {
-      name: "HIMSS News",
-      url: "https://www.himss.org/news",
-      type: "scrape",
-      scrape_selector: ".news-item",
-      priority: "high",
-    },
-    {
-      name: "Becker's Health IT",
-      url: "https://www.beckershospitalreview.com/healthcare-information-technology.html",
-      type: "scrape",
-      scrape_selector: ".article-headline",
-      priority: "high",
-    },
-    {
-      name: "Health Data Management",
-      url: "https://www.healthdatamanagement.com",
+      name: "Healthcare IT News - Cybersecurity",
+      url: "https://www.healthcareitnews.com",
       type: "rss",
-      rss_url: "https://www.healthdatamanagement.com/rss",
-      priority: "medium",
+      rss_url: "https://www.healthcareitnews.com/rss/cybersecurity.xml",
+      priority: "high",
     },
-    {
-      name: "CHIME Central",
-      url: "https://chimecentral.org",
-      type: "scrape",
-      scrape_selector: ".news-article",
-      priority: "medium",
-    },
-    // === TRADE / INDUSTRY ===
     {
       name: "FierceHealthcare",
       url: "https://www.fiercehealthcare.com",
       type: "rss",
       rss_url: "https://www.fiercehealthcare.com/rss/xml",
-      priority: "high",
-    },
-    {
-      name: "Modern Healthcare",
-      url: "https://www.modernhealthcare.com",
-      type: "rss",
-      rss_url: "https://www.modernhealthcare.com/section/rss",
       priority: "high",
     },
     {
@@ -355,12 +331,20 @@ async function seedDefaultSources(client: any) {
       priority: "high",
     },
     {
-      name: "Health Affairs Blog",
-      url: "https://www.healthaffairs.org/do/section/blog",
+      name: "Healthcare Dive - Health IT",
+      url: "https://www.healthcaredive.com",
       type: "rss",
-      rss_url: "https://www.healthaffairs.org/action/showFeed?type=etoc&feed=rss&jc=hlthaff",
-      priority: "medium",
+      rss_url: "https://www.healthcaredive.com/feeds/topic/health-it/",
+      priority: "high",
     },
+    {
+      name: "Becker's Health IT",
+      url: "https://www.beckershospitalreview.com/healthcare-information-technology.html",
+      type: "scrape",
+      scrape_selector: "article.bh-card",
+      priority: "high",
+    },
+    // === TIER 2: Broader Health + Tech (verified RSS feeds) ===
     {
       name: "STAT News - Health Tech",
       url: "https://www.statnews.com/category/health-tech/",
@@ -368,85 +352,62 @@ async function seedDefaultSources(client: any) {
       rss_url: "https://www.statnews.com/category/health-tech/feed/",
       priority: "high",
     },
-    // === GOVERNMENT / REGULATORY ===
     {
-      name: "HHS Health IT News",
-      url: "https://www.hhs.gov/about/news/index.html",
-      type: "scrape",
-      scrape_selector: ".views-row, .news-item, article",
-      priority: "medium",
-    },
-    {
-      name: "ONC Health IT Buzz",
-      url: "https://www.healthit.gov/buzz-blog",
-      type: "scrape",
-      scrape_selector: ".views-row, article, .node",
-      priority: "medium",
-    },
-    {
-      name: "CMS Newsroom",
-      url: "https://www.cms.gov/newsroom/press-releases",
-      type: "scrape",
-      scrape_selector: ".views-row, article, .news-item",
-      priority: "medium",
-    },
-    {
-      name: "FDA Digital Health",
-      url: "https://www.fda.gov/medical-devices/digital-health-center-excellence",
-      type: "scrape",
-      scrape_selector: ".views-row, article, .content-item",
-      priority: "low",
-    },
-    // === CYBERSECURITY ===
-    {
-      name: "Health-ISAC Advisories",
-      url: "https://health-isac.org/hisac-alerts/",
-      type: "scrape",
-      scrape_selector: "article, .post, .alert-item",
-      priority: "high",
-    },
-    {
-      name: "HHS HC3 Threat Briefs",
-      url: "https://www.hhs.gov/about/agencies/asa/ocio/hc3/products/index.html",
-      type: "scrape",
-      scrape_selector: ".views-row, article, .content-item",
-      priority: "high",
-    },
-    {
-      name: "CISA Healthcare Alerts",
-      url: "https://www.cisa.gov/news-events/alerts",
+      name: "MobiHealthNews",
+      url: "https://www.mobihealthnews.com",
       type: "rss",
-      rss_url: "https://www.cisa.gov/news-events/alerts.xml",
-      priority: "medium",
-    },
-    // === ANALYST / INNOVATION ===
-    {
-      name: "KLAS Research Blog",
-      url: "https://klasresearch.com/blog",
-      type: "scrape",
-      scrape_selector: "article, .blog-post, .post-item",
-      priority: "medium",
+      rss_url: "https://www.mobihealthnews.com/rss.xml",
+      priority: "high",
     },
     {
-      name: "Rock Health",
-      url: "https://rockhealth.com/insights/",
-      type: "scrape",
-      scrape_selector: "article, .post, .insight-card",
+      name: "HIT Consultant",
+      url: "https://hitconsultant.net",
+      type: "rss",
+      rss_url: "https://hitconsultant.net/feed/",
       priority: "medium",
     },
     {
-      name: "AVIA Health",
-      url: "https://www.aviahealth.com/insights",
-      type: "scrape",
-      scrape_selector: "article, .post, .insight-item",
-      priority: "low",
+      name: "HealthTech Magazine",
+      url: "https://healthtechmagazine.net",
+      type: "rss",
+      rss_url: "https://healthtechmagazine.net/rss.xml",
+      priority: "medium",
     },
     {
-      name: "Gartner Healthcare IT",
-      url: "https://www.gartner.com/en/industries/healthcare",
-      type: "scrape",
-      scrape_selector: "article, .research-item, .card",
-      priority: "low",
+      name: "Healthcare Finance News",
+      url: "https://www.healthcarefinancenews.com",
+      type: "rss",
+      rss_url: "https://www.healthcarefinancenews.com/rss.xml",
+      priority: "medium",
+    },
+    {
+      name: "HealthcareITToday",
+      url: "https://www.healthcareittoday.com",
+      type: "rss",
+      rss_url: "https://www.healthcareittoday.com/feed/",
+      priority: "medium",
+    },
+    // === TIER 3: Policy, Cybersecurity & Regulatory (verified feeds) ===
+    {
+      name: "Health Affairs",
+      url: "https://www.healthaffairs.org",
+      type: "rss",
+      rss_url: "https://www.healthaffairs.org/action/showFeed?type=etoc&feed=rss&jc=hlthaff",
+      priority: "medium",
+    },
+    {
+      name: "KFF Health News",
+      url: "https://kffhealthnews.org",
+      type: "rss",
+      rss_url: "https://khn.org/feed/",
+      priority: "medium",
+    },
+    {
+      name: "CISA Cybersecurity Advisories",
+      url: "https://www.cisa.gov/cybersecurity-advisories",
+      type: "rss",
+      rss_url: "https://www.cisa.gov/cybersecurity-advisories/all.xml",
+      priority: "high",
     },
   ];
 
