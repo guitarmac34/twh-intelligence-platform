@@ -14,7 +14,7 @@ export async function initializeDatabase() {
       -- Sources configuration table
       CREATE TABLE IF NOT EXISTS sources (
         id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-        name TEXT NOT NULL,
+        name TEXT NOT NULL UNIQUE,
         url TEXT NOT NULL,
         type TEXT NOT NULL CHECK (type IN ('rss', 'sitemap', 'scrape')),
         rss_url TEXT,
@@ -274,6 +274,14 @@ export async function initializeDatabase() {
       CREATE INDEX IF NOT EXISTS idx_account_articles_account ON account_articles(account_id);
       CREATE INDEX IF NOT EXISTS idx_account_articles_article ON account_articles(article_id);
       CREATE INDEX IF NOT EXISTS idx_articles_fulltext ON articles USING GIN(to_tsvector('english', COALESCE(title, '') || ' ' || COALESCE(raw_content, '')));
+
+      -- Migration: add UNIQUE constraint on sources.name for existing databases
+      -- First remove duplicates (keep the earliest), then add constraint
+      DELETE FROM sources WHERE id NOT IN (
+        SELECT DISTINCT ON (name) id FROM sources ORDER BY name, created_at ASC
+      );
+      ALTER TABLE sources DROP CONSTRAINT IF EXISTS sources_name_key;
+      ALTER TABLE sources ADD CONSTRAINT sources_name_key UNIQUE (name);
     `);
 
     console.log("✅ [Database] Schema initialized successfully");
@@ -411,18 +419,38 @@ async function seedDefaultSources(client: any) {
     },
   ];
 
+  const sourceNames: string[] = [];
+
   for (const source of defaultSources) {
+    sourceNames.push(source.name);
     try {
       await client.query(`
-        INSERT INTO sources (name, url, type, rss_url, scrape_selector, priority)
-        VALUES ($1, $2, $3, $4, $5, $6)
-        ON CONFLICT DO NOTHING
+        INSERT INTO sources (name, url, type, rss_url, scrape_selector, priority, enabled)
+        VALUES ($1, $2, $3, $4, $5, $6, true)
+        ON CONFLICT (name) DO UPDATE SET
+          url = EXCLUDED.url,
+          type = EXCLUDED.type,
+          rss_url = EXCLUDED.rss_url,
+          scrape_selector = EXCLUDED.scrape_selector,
+          priority = EXCLUDED.priority,
+          enabled = true,
+          error_count = 0,
+          updated_at = CURRENT_TIMESTAMP
       `, [source.name, source.url, source.type, source.rss_url || null, source.scrape_selector || null, source.priority]);
     } catch (e) {
-      // Ignore duplicate entries
+      console.error(`Failed to seed source: ${source.name}`, e);
     }
   }
-  
+
+  // Disable any old sources not in the current default list
+  if (sourceNames.length > 0) {
+    const placeholders = sourceNames.map((_, i) => `$${i + 1}`).join(", ");
+    await client.query(
+      `UPDATE sources SET enabled = false, updated_at = CURRENT_TIMESTAMP WHERE name NOT IN (${placeholders}) AND enabled = true`,
+      sourceNames
+    );
+  }
+
   console.log("✅ [Database] Default sources seeded");
 }
 
