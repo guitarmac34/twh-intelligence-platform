@@ -209,10 +209,35 @@ export const mastra = new Mastra({
         }),
 });
 
-// Initialize database schema and seed sources/personas on startup
-initializeDatabase().catch((err) => {
-  console.error("Failed to initialize database on startup:", err);
-});
+// Initialize database schema, seed sources/personas, and run first scrape on startup
+initializeDatabase()
+  .then(async () => {
+    console.log("🚀 [Startup] Database initialized. Checking if initial scrape needed...");
+    // Auto-trigger intelligence workflow if no articles exist yet
+    try {
+      const { query } = await import("./db/schema");
+      const result = await query("SELECT COUNT(*) as count FROM articles");
+      const articleCount = parseInt(result.rows[0]?.count || "0", 10);
+      if (articleCount === 0) {
+        console.log("📡 [Startup] No articles found — triggering initial intelligence workflow...");
+        const wf = mastra.getWorkflow("intelligenceWorkflow");
+        if (wf) {
+          wf.start({ inputData: {} }).then(() => {
+            console.log("✅ [Startup] Initial intelligence workflow started");
+          }).catch((err: any) => {
+            console.error("❌ [Startup] Failed to start initial workflow:", err);
+          });
+        }
+      } else {
+        console.log(`✅ [Startup] ${articleCount} articles already exist, skipping initial scrape`);
+      }
+    } catch (err) {
+      console.error("❌ [Startup] Error checking articles:", err);
+    }
+  })
+  .catch((err) => {
+    console.error("Failed to initialize database on startup:", err);
+  });
 
 // Note: Multiple workflows and agents are supported in this build.
 // The Replit Agent UI single-workflow/agent limitation does not apply.
