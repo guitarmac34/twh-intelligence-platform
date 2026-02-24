@@ -372,9 +372,34 @@ export const apiRoutes: Array<{
       logger?.info("🚀 [API] Manual trigger requested");
 
       try {
-        // Execute workflow directly, bypassing Inngest
+        // Quick inline test: run steps directly to see where articles are lost
+        const { initializeDatabase, getSources, scrapeRssFeed, scrapeHtmlPage } = await import("../db/operations");
+        await initializeDatabase();
+        const sources = await getSources();
+
+        const debugResults: any = { sourcesCount: sources.length, sourceNames: sources.map((s: any) => s.name) };
+
+        // Try scraping first source
+        if (sources.length > 0) {
+          const firstSource = sources[0];
+          try {
+            let articles;
+            if (firstSource.type === "rss" && firstSource.rss_url) {
+              articles = await scrapeRssFeed(firstSource.rss_url, 5);
+            } else {
+              articles = await scrapeHtmlPage(firstSource.url, firstSource.scrape_selector, 5);
+            }
+            debugResults.firstSourceName = firstSource.name;
+            debugResults.firstSourceArticles = articles.length;
+            debugResults.firstTitle = articles[0]?.title;
+          } catch (e: any) {
+            debugResults.scrapeError = e.message;
+          }
+        }
+
+        // Now run the full workflow
         const result = await runIntelligenceWorkflowDirect(mastra);
-        return c.json({ success: true, message: "Intelligence workflow completed", result });
+        return c.json({ success: true, message: "Intelligence workflow completed", result, debugResults });
       } catch (error: any) {
         logger?.error("❌ [API] Trigger failed", { error: error.message, stack: error.stack });
         return c.json({ success: false, message: error.message, stack: error.stack }, 500);
