@@ -273,6 +273,21 @@ const processArticlesStep = createStep({
       return { processedArticles: [], success: true, totalProcessed: 0, errors: 0 };
     }
 
+    // Quick API key test before processing all articles
+    if (inputData.newArticles.length > 0) {
+      try {
+        const testResponse = await generateText({
+          model: openai("gpt-4o-mini"),
+          prompt: "Say hello in one word.",
+          maxTokens: 10,
+        });
+        console.log(`✅ [Step 4] OpenAI test passed: "${testResponse.text}"`);
+      } catch (testErr: any) {
+        console.error(`❌ [Step 4] OpenAI API test FAILED:`, testErr.message);
+        throw new Error(`OpenAI API not working: ${testErr.message}`);
+      }
+    }
+
     const processedArticles: any[] = [];
     let errors = 0;
 
