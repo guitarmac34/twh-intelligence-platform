@@ -53,7 +53,8 @@ const findArticlesStep = createStep({
       );
 
       const personas = await getPersonas();
-      const articles = await getArticlesNeedingViewpoints(20);
+      // Process up to 50 articles per run (batched in Step 2)
+      const articles = await getArticlesNeedingViewpoints(50);
 
       logger?.info("✅ [Viewpoint Step 1] Found articles and personas", {
         articleCount: articles.length,
@@ -104,6 +105,11 @@ const generateViewpointsStep = createStep({
       };
     }
 
+    const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || "10", 10);
+    const BATCH_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS || "5000", 10);
+    const API_CALL_DELAY_MS = parseInt(process.env.API_CALL_DELAY_MS || "500", 10);
+    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+
     const personaMap = new Map(
       inputData.personas.map((p: any) => [p.slug, p])
     );
@@ -113,8 +119,17 @@ const generateViewpointsStep = createStep({
     let errors = 0;
 
     const allAnalystSlugs = ["bill-russell", "drex-deford", "sarah-richardson"];
+    const totalArticles = inputData.articles.length;
+    const totalBatches = Math.ceil(totalArticles / BATCH_SIZE);
 
-    for (const article of inputData.articles) {
+    console.log(`📦 [Viewpoint Step 2] Processing ${totalArticles} articles in ${totalBatches} batches`);
+
+    for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+      const batchStart = batchIdx * BATCH_SIZE;
+      const batch = inputData.articles.slice(batchStart, batchStart + BATCH_SIZE);
+      console.log(`📦 [Viewpoint Step 2] Batch ${batchIdx + 1}/${totalBatches} (${batch.length} articles)`);
+
+    for (const article of batch) {
       const topicTags = article.topic_tags || [];
       const relevanceScore = article.relevance_score || 0;
 
@@ -188,6 +203,8 @@ Respond with valid JSON only:
             temperature: 0.7,
           });
 
+          await sleep(API_CALL_DELAY_MS);
+
           const jsonMatch = response.text.match(/\{[\s\S]*\}/);
           if (!jsonMatch) {
             throw new Error("Failed to parse viewpoint response");
@@ -239,8 +256,16 @@ Respond with valid JSON only:
           topicTags,
         });
       }
-    }
+    } // end article loop in batch
 
+      // Delay between batches
+      if (batchIdx < totalBatches - 1) {
+        console.log(`⏳ [Viewpoint Step 2] Batch ${batchIdx + 1} complete. Waiting ${BATCH_DELAY_MS}ms...`);
+        await sleep(BATCH_DELAY_MS);
+      }
+    } // end batch loop
+
+    console.log(`✅ [Viewpoint Step 2] All batches complete: ${viewpointsGenerated} viewpoints, ${errors} errors`);
     logger?.info("✅ [Viewpoint Step 2] Analyst viewpoints complete", {
       viewpointsGenerated,
       articlesProcessed: processedArticles.length,
@@ -288,8 +313,20 @@ const generateBriefsStep = createStep({
     let briefsGenerated = 0;
     let errors = inputData.errors;
     const outputSlugs = Object.keys(OUTPUT_PERSONAS);
+    const API_CALL_DELAY_MS = parseInt(process.env.API_CALL_DELAY_MS || "500", 10);
+    const BATCH_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS || "5000", 10);
+    const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
 
-    for (const article of inputData.processedArticles) {
+    console.log(`📦 [Viewpoint Step 3] Generating briefs for ${inputData.processedArticles.length} articles x ${outputSlugs.length} personas`);
+
+    for (let i = 0; i < inputData.processedArticles.length; i++) {
+      const article = inputData.processedArticles[i];
+      // Add batch delay every 5 articles
+      if (i > 0 && i % 5 === 0) {
+        console.log(`⏳ [Viewpoint Step 3] Processed ${i}/${inputData.processedArticles.length} articles, pausing ${BATCH_DELAY_MS}ms...`);
+        await sleep(BATCH_DELAY_MS);
+      }
+
       for (const outputSlug of outputSlugs) {
         try {
           const briefPrompt = buildBriefPrompt(
@@ -306,6 +343,8 @@ const generateBriefsStep = createStep({
             prompt: briefPrompt,
             temperature: 0.5,
           });
+
+          await sleep(API_CALL_DELAY_MS);
 
           const jsonMatch = response.text.match(/\{[\s\S]*\}/);
           if (!jsonMatch) {
