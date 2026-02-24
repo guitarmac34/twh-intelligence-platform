@@ -393,6 +393,19 @@ export const apiRoutes: Array<{
         const sources = await getSources();
         if (sources.length === 0) return c.json({ error: "No sources" });
 
+        // Also test direct step execution
+        const { runIntelligenceWorkflowDirect } = await import("../workflows/intelligenceWorkflow");
+        let stepDebug: any = {};
+        try {
+          const { initializeDatabase } = await import("../db/operations");
+          await initializeDatabase();
+          const allSources = await getSources();
+          stepDebug.sourcesInDb = allSources.length;
+          stepDebug.sourceNames = allSources.map((s: any) => s.name);
+        } catch (e: any) {
+          stepDebug.error = e.message;
+        }
+
         const results: any[] = [];
         // Test first 3 sources
         for (const source of sources.slice(0, 3)) {
@@ -408,7 +421,7 @@ export const apiRoutes: Array<{
             results.push({ source: source.name, type: source.type, error: e.message });
           }
         }
-        return c.json({ results });
+        return c.json({ results, stepDebug });
       } catch (e: any) {
         return c.json({ error: e.message, stack: e.stack });
       }

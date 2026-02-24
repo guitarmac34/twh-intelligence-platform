@@ -688,9 +688,10 @@ export async function runIntelligenceWorkflowDirect(mastra?: any) {
     console.log(`📋 [Direct] Step 1 done: ${step1.sources.length} sources loaded`);
 
     // Step 2: Monitor sources
+    console.log(`📋 [Direct] Step 1 output: success=${step1.success}, sources=${JSON.stringify(step1.sources?.length)}`);
     const step2 = await monitorSourcesStep.execute(makeCtx(step1) as any);
+    console.log(`📰 [Direct] Step 2 output: success=${step2.success}, articles=${step2.articles?.length}, sourcesProcessed=${step2.sourcesProcessed}, error=${step2.error}`);
     if (!step2.success) throw new Error(step2.error || "Failed to monitor sources");
-    console.log(`📰 [Direct] Step 2 done: ${step2.articles.length} articles scraped from ${step2.sourcesProcessed} sources`);
 
     // Step 3: Filter content
     const step3 = await filterContentStep.execute(makeCtx(step2) as any);
