@@ -366,16 +366,16 @@ Respond with JSON only:
             extractedOrgNames = normalizedOrgs.map((o: any) => o.canonicalName);
           }
         } catch (e) {
+          console.error("⚠️ [Step 4] Entity extraction failed:", String(e));
           logger?.warn("⚠️ [Step 4] Entity extraction failed", { error: String(e) });
         }
 
-        // 3. Generate summary using the agent
+        // 3. Generate summary using AI
         let hasSummary = false;
         try {
-          const summaryResponse = await researcherAgent.generateLegacy([
-            {
-              role: "user",
-              content: `Analyze this healthcare IT article and provide:
+          const summaryResponse = await generateText({
+            model: openai("gpt-4o-mini"),
+            prompt: `Analyze this healthcare IT article and provide:
 1. A 2-3 sentence summary of what happened, who is involved, and why it matters
 2. 3-5 key takeaways for healthcare IT sales/marketing teams
 3. Topic tags (choose from: cybersecurity, AI, EHR, interoperability, telehealth, analytics, cloud, regulation, M&A, partnership, funding, leadership)
@@ -395,8 +395,8 @@ Respond in this exact JSON format:
   "relevanceScore": 8,
   "qualityRating": 7
 }`,
-            },
-          ]);
+            temperature: 0.3,
+          });
 
           const jsonMatch = summaryResponse.text.match(/\{[\s\S]*\}/);
           if (jsonMatch) {
@@ -412,6 +412,7 @@ Respond in this exact JSON format:
             hasSummary = true;
           }
         } catch (e) {
+          console.error("⚠️ [Step 4] Summary generation failed:", String(e));
           logger?.warn("⚠️ [Step 4] Summary generation failed", { error: String(e) });
         }
 
