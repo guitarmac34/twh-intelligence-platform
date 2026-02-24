@@ -5,7 +5,7 @@ import { generateText } from "ai";
 
 const openai = createOpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.trim(),
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.replace(/\s+/g, ""),
 });
 
 export const entityExtractorTool = createTool({

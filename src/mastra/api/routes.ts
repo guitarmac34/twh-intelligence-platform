@@ -369,7 +369,7 @@ export const apiRoutes: Array<{
     handler: async (c: any) => {
       try {
         const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
-        const trimmedKey = apiKey?.trim();
+        const trimmedKey = apiKey?.replace(/\s+/g, "");
         const openaiTest = createOpenAI({
           baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
           apiKey: trimmedKey,
@@ -496,7 +496,7 @@ export const apiRoutes: Array<{
       (async () => {
         const openai = createOpenAI({
           baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.trim(),
+          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.replace(/\s+/g, ""),
         });
 
         for (const url of urls) {
@@ -744,7 +744,7 @@ Respond with JSON: {"viewpoint": "4-6 paragraph narrative.", "keyInsights": ["in
       try {
         const openai = createOpenAI({
           baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.trim(),
+          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.replace(/\s+/g, ""),
         });
 
         // If URL provided but no content, try to scrape it
@@ -1039,7 +1039,7 @@ Respond with valid JSON:
       try {
         const openai = createOpenAI({
           baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.trim(),
+          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.replace(/\s+/g, ""),
         });
 
         // Get the article + summary
@@ -1491,7 +1491,7 @@ Generate the email brief in this JSON format:
 
         const openaiClient = createOpenAI({
           baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.trim(),
+          apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.replace(/\s+/g, ""),
         });
 
         // Get viewpoints for linked articles
