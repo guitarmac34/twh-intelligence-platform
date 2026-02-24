@@ -430,6 +430,29 @@ export const apiRoutes: Array<{
       });
     },
   },
+  {
+    path: "/api/trigger/viewpoints",
+    method: "POST",
+    handler: async (c: any) => {
+      const mastra = c.get("mastra");
+
+      (async () => {
+        try {
+          console.log("🚀 [Pipeline] Starting viewpoint workflow...");
+          await runViewpointWorkflowDirect(mastra);
+          console.log("✅ [Pipeline] Viewpoints done");
+
+          console.log("🚀 [Pipeline] Starting digest workflow...");
+          await runDigestWorkflowDirect(mastra);
+          console.log("✅ [Pipeline] Digest done");
+        } catch (error: any) {
+          console.error("❌ [Pipeline] Viewpoint/Digest failed:", error.message);
+        }
+      })();
+
+      return c.json({ success: true, message: "Viewpoint + digest pipeline started. Check /api/health for progress." });
+    },
+  },
   // ======================================================================
   // SLACK INTEGRATION
   // ======================================================================
