@@ -1500,7 +1500,7 @@ Respond in JSON:
 }`;
 
         const response = await generateText({
-          model: openaiClient("gpt-4o"),
+          model: openaiClient("gpt-4o-mini"),
           prompt: briefPrompt,
           temperature: 0.5,
         });
