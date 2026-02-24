@@ -13,6 +13,9 @@ import { inngest, inngestServe } from "./inngest";
 import { apiRoutes } from "./api/routes";
 import { initializeDatabase } from "./db/operations";
 import { runIntelligenceWorkflowDirect } from "./workflows/intelligenceWorkflow";
+import { runViewpointWorkflowDirect } from "./workflows/viewpointWorkflow";
+import { runDigestWorkflowDirect } from "./workflows/digestWorkflow";
+import cron from "node-cron";
 
 // ======================================================================
 // IMPORT AGENTS AND WORKFLOWS
@@ -21,31 +24,6 @@ import { researcherAgent } from "./agents/researcherAgent";
 import { intelligenceWorkflow } from "./workflows/intelligenceWorkflow";
 import { viewpointWorkflow } from "./workflows/viewpointWorkflow";
 import { digestWorkflow } from "./workflows/digestWorkflow";
-import { registerCronTrigger } from "../triggers/cronTriggers";
-
-// ======================================================================
-// REGISTER CRON TRIGGER
-// ======================================================================
-// The TWH Intelligence Agent runs on a schedule to monitor healthcare IT news
-// Default: Every 4 hours (6 times per day)
-// Can be overridden via SCHEDULE_CRON_EXPRESSION environment variable
-// Intelligence workflow: scrape, extract, summarize (default every 4 hours)
-registerCronTrigger({
-  cronExpression: process.env.SCHEDULE_CRON_EXPRESSION || "0 */4 * * *",
-  workflow: intelligenceWorkflow,
-});
-
-// Viewpoint workflow: generate persona perspectives (30 min after intelligence)
-registerCronTrigger({
-  cronExpression: process.env.VIEWPOINT_CRON_EXPRESSION || "30 */4 * * *",
-  workflow: viewpointWorkflow,
-});
-
-// Digest workflow: generate and deliver daily email digests (default: 6 AM ET weekdays = 10:00 UTC)
-registerCronTrigger({
-  cronExpression: process.env.DIGEST_CRON_EXPRESSION || "0 10 * * 1-5",
-  workflow: digestWorkflow,
-});
 
 // ======================================================================
 // CUSTOM LOGGER
@@ -121,6 +99,7 @@ export const mastra = new Mastra({
       "cheerio",
       "youtube-transcript",
       "ytpl",
+      "node-cron",
     ],
     sourcemap: true,
   },
@@ -213,7 +192,8 @@ export const mastra = new Mastra({
 // Initialize database schema, seed sources/personas, and run first scrape on startup
 initializeDatabase()
   .then(async () => {
-    console.log("🚀 [Startup] Database initialized. Checking if initial scrape needed...");
+    console.log("🚀 [Startup] Database initialized. Setting up scheduled workflows...");
+
     // Auto-trigger intelligence workflow if no articles exist yet
     try {
       const { query } = await import("./db/schema");
@@ -221,8 +201,12 @@ initializeDatabase()
       const articleCount = parseInt(result.rows[0]?.count || "0", 10);
       if (articleCount === 0) {
         console.log("📡 [Startup] No articles found — triggering initial intelligence workflow...");
-        runIntelligenceWorkflowDirect(mastra).catch((err: any) => {
-          console.error("❌ [Startup] Intelligence workflow failed:", err);
+        runIntelligenceWorkflowDirect(mastra).then(() => {
+          // After initial scrape completes, run viewpoints immediately
+          console.log("📡 [Startup] Running initial viewpoint generation...");
+          return runViewpointWorkflowDirect(mastra);
+        }).catch((err: any) => {
+          console.error("❌ [Startup] Initial workflow failed:", err);
         });
       } else {
         console.log(`✅ [Startup] ${articleCount} articles already exist, skipping initial scrape`);
@@ -230,10 +214,58 @@ initializeDatabase()
     } catch (err) {
       console.error("❌ [Startup] Error checking articles:", err);
     }
+
+    // ================================================================
+    // CRON SCHEDULING (bypasses Inngest — runs workflows directly)
+    // ================================================================
+    let workflowRunning = false;
+
+    // Intelligence workflow: scrape + process articles (default: every 4 hours)
+    const intelligenceCron = process.env.SCHEDULE_CRON_EXPRESSION || "0 */4 * * *";
+    cron.schedule(intelligenceCron, async () => {
+      if (workflowRunning) {
+        console.log("⏳ [Cron] Skipping intelligence run — previous run still active");
+        return;
+      }
+      workflowRunning = true;
+      console.log(`🕐 [Cron] Starting intelligence workflow (${new Date().toISOString()})`);
+      try {
+        await runIntelligenceWorkflowDirect(mastra);
+        console.log("✅ [Cron] Intelligence workflow complete");
+      } catch (err: any) {
+        console.error("❌ [Cron] Intelligence workflow failed:", err.message);
+      } finally {
+        workflowRunning = false;
+      }
+    });
+    console.log(`🕐 [Cron] Intelligence workflow scheduled: ${intelligenceCron}`);
+
+    // Viewpoint workflow: generate persona perspectives (30 min after intelligence)
+    const viewpointCron = process.env.VIEWPOINT_CRON_EXPRESSION || "30 */4 * * *";
+    cron.schedule(viewpointCron, async () => {
+      console.log(`🎙️ [Cron] Starting viewpoint workflow (${new Date().toISOString()})`);
+      try {
+        await runViewpointWorkflowDirect(mastra);
+        console.log("✅ [Cron] Viewpoint workflow complete");
+      } catch (err: any) {
+        console.error("❌ [Cron] Viewpoint workflow failed:", err.message);
+      }
+    });
+    console.log(`🎙️ [Cron] Viewpoint workflow scheduled: ${viewpointCron}`);
+
+    // Digest workflow: daily email digest (default: 6 AM ET weekdays = 10:00 UTC)
+    const digestCron = process.env.DIGEST_CRON_EXPRESSION || "0 10 * * 1-5";
+    cron.schedule(digestCron, async () => {
+      console.log(`📧 [Cron] Starting digest workflow (${new Date().toISOString()})`);
+      try {
+        await runDigestWorkflowDirect(mastra);
+        console.log("✅ [Cron] Digest workflow complete");
+      } catch (err: any) {
+        console.error("❌ [Cron] Digest workflow failed:", err.message);
+      }
+    });
+    console.log(`📧 [Cron] Digest workflow scheduled: ${digestCron}`);
   })
   .catch((err) => {
     console.error("Failed to initialize database on startup:", err);
   });
-
-// Note: Multiple workflows and agents are supported in this build.
-// The Replit Agent UI single-workflow/agent limitation does not apply.

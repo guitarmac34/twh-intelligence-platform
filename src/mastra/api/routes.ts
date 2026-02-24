@@ -373,10 +373,14 @@ export const apiRoutes: Array<{
 
       try {
         // Execute workflow directly, bypassing Inngest
-        runIntelligenceWorkflowDirect(mastra).catch((err: any) => {
-          logger?.error("❌ [API] Intelligence workflow failed", { error: err.message });
+        // Chain: intelligence -> viewpoints automatically
+        runIntelligenceWorkflowDirect(mastra).then(() => {
+          logger?.info("📡 [API] Intelligence complete, starting viewpoint generation...");
+          return runViewpointWorkflowDirect(mastra);
+        }).catch((err: any) => {
+          logger?.error("❌ [API] Workflow pipeline failed", { error: err.message });
         });
-        return c.json({ success: true, message: "Intelligence workflow started" });
+        return c.json({ success: true, message: "Intelligence + viewpoint pipeline started" });
       } catch (error: any) {
         logger?.error("❌ [API] Trigger failed", { error: error.message });
         return c.json({ success: false, message: error.message }, 500);
