@@ -681,34 +681,33 @@ export async function runIntelligenceWorkflowDirect(mastra?: any) {
     runtimeContext: {} as any,
   });
 
+  const stepResults: Record<string, any> = {};
+
   try {
     // Step 1: Load sources
     const step1 = await loadSourcesStep.execute(makeCtx({}) as any);
+    stepResults.step1 = { success: step1.success, sourcesCount: step1.sources?.length, error: step1.error };
     if (!step1.success) throw new Error(step1.error || "Failed to load sources");
-    console.log(`📋 [Direct] Step 1 done: ${step1.sources.length} sources loaded`);
 
     // Step 2: Monitor sources
-    console.log(`📋 [Direct] Step 1 output: success=${step1.success}, sources=${JSON.stringify(step1.sources?.length)}`);
     const step2 = await monitorSourcesStep.execute(makeCtx(step1) as any);
-    console.log(`📰 [Direct] Step 2 output: success=${step2.success}, articles=${step2.articles?.length}, sourcesProcessed=${step2.sourcesProcessed}, error=${step2.error}`);
+    stepResults.step2 = { success: step2.success, articlesCount: step2.articles?.length, sourcesProcessed: step2.sourcesProcessed, error: step2.error };
     if (!step2.success) throw new Error(step2.error || "Failed to monitor sources");
 
     // Step 3: Filter content
     const step3 = await filterContentStep.execute(makeCtx(step2) as any);
-    console.log(`🔄 [Direct] Step 3 done: ${step3.newArticles.length} new articles, ${step3.duplicatesSkipped} duplicates skipped`);
+    stepResults.step3 = { newArticles: step3.newArticles?.length, duplicatesSkipped: step3.duplicatesSkipped };
 
     // Step 4: Process articles
     const step4 = await processArticlesStep.execute(makeCtx(step3) as any);
-    console.log(`🔬 [Direct] Step 4 done: ${step4.totalProcessed} articles processed, ${step4.errors} errors`);
+    stepResults.step4 = { totalProcessed: step4.totalProcessed, errors: step4.errors };
 
     // Step 5: Score and link
     const step5 = await scoreAndLinkStep.execute(makeCtx(step4) as any);
-    console.log(`📊 [Direct] Step 5 done: scoring complete`);
 
     // Step 6: Store results
     const step6 = await storeResultsStep.execute(makeCtx(step5) as any);
-    console.log("✅ [Direct] Intelligence workflow complete", { articlesProcessed: step6.articlesProcessed });
-    return step6;
+    return { ...step6, stepResults };
   } catch (error) {
     console.error("❌ [Direct] Intelligence workflow failed:", error);
     throw error;
