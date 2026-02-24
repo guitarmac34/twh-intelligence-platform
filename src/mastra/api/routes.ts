@@ -372,9 +372,10 @@ export const apiRoutes: Array<{
         // Use the Mastra workflow API to start the workflow
         const workflow = mastra?.getWorkflow("intelligenceWorkflow");
         if (workflow) {
-          const result = await workflow.start({ inputData: {} });
-          logger?.info("✅ [API] Workflow started", { runId: result?.runId });
-          return c.json({ success: true, message: "Workflow triggered", runId: result?.runId });
+          const run = await workflow.createRunAsync();
+          run.start({ inputData: {} });
+          logger?.info("✅ [API] Workflow started", { runId: run?.runId });
+          return c.json({ success: true, message: "Workflow triggered", runId: run?.runId });
         } else {
           logger?.error("❌ [API] Workflow not found");
           return c.json({ success: false, message: "Workflow not found" }, 404);
@@ -1211,9 +1212,10 @@ Generate the email brief in this JSON format:
       try {
         const workflow = mastra?.getWorkflow("viewpointWorkflow");
         if (workflow) {
-          const result = await workflow.start({ inputData: {} });
-          logger?.info("✅ [API] Viewpoint workflow started", { runId: result?.runId });
-          return c.json({ success: true, message: "Viewpoint workflow triggered", runId: result?.runId });
+          const run = await workflow.createRunAsync();
+          run.start({ inputData: {} });
+          logger?.info("✅ [API] Viewpoint workflow started", { runId: run?.runId });
+          return c.json({ success: true, message: "Viewpoint workflow triggered", runId: run?.runId });
         } else {
           return c.json({ success: false, message: "Viewpoint workflow not found" }, 404);
         }
@@ -1310,8 +1312,9 @@ Generate the email brief in this JSON format:
       try {
         const workflow = mastra?.getWorkflow("digestWorkflow");
         if (workflow) {
-          const result = await workflow.start({ inputData: {} });
-          return c.json({ success: true, message: "Digest workflow triggered", runId: result?.runId });
+          const run = await workflow.createRunAsync();
+          run.start({ inputData: {} });
+          return c.json({ success: true, message: "Digest workflow triggered", runId: run?.runId });
         } else {
           return c.json({ success: false, message: "Digest workflow not found" }, 404);
         }

@@ -222,10 +222,13 @@ initializeDatabase()
         console.log("📡 [Startup] No articles found — triggering initial intelligence workflow...");
         const wf = mastra.getWorkflow("intelligenceWorkflow");
         if (wf) {
-          wf.start({ inputData: {} }).then(() => {
-            console.log("✅ [Startup] Initial intelligence workflow started");
+          wf.createRunAsync().then((run: any) => {
+            console.log("✅ [Startup] Initial intelligence workflow run created", { runId: run?.runId });
+            run.start({ inputData: {} }).catch((err: any) => {
+              console.error("❌ [Startup] Workflow run failed:", err);
+            });
           }).catch((err: any) => {
-            console.error("❌ [Startup] Failed to start initial workflow:", err);
+            console.error("❌ [Startup] Failed to create workflow run:", err);
           });
         }
       } else {
