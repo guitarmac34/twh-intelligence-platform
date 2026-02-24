@@ -383,6 +383,37 @@ export const apiRoutes: Array<{
   },
   // ======================================================================
   // SLACK INTEGRATION
+  // Debug: test scraping a single source
+  {
+    path: "/api/debug/scrape-test",
+    method: "GET" as const,
+    handler: async (c: any) => {
+      const { scrapeRssFeed, scrapeHtmlPage, getSources } = await import("../db/operations");
+      try {
+        const sources = await getSources();
+        if (sources.length === 0) return c.json({ error: "No sources" });
+
+        const results: any[] = [];
+        // Test first 3 sources
+        for (const source of sources.slice(0, 3)) {
+          try {
+            let articles;
+            if (source.type === "rss" && source.rss_url) {
+              articles = await scrapeRssFeed(source.rss_url, 3);
+            } else {
+              articles = await scrapeHtmlPage(source.url, source.scrape_selector, 3);
+            }
+            results.push({ source: source.name, type: source.type, articleCount: articles.length, firstTitle: articles[0]?.title || "none" });
+          } catch (e: any) {
+            results.push({ source: source.name, type: source.type, error: e.message });
+          }
+        }
+        return c.json({ results });
+      } catch (e: any) {
+        return c.json({ error: e.message, stack: e.stack });
+      }
+    },
+  },
   // ======================================================================
   {
     path: "/api/slack/events",
