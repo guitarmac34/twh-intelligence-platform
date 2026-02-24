@@ -1564,12 +1564,16 @@ Respond in JSON:
           SELECT
             (SELECT COUNT(*) FROM articles) as articles,
             (SELECT COUNT(*) FROM sources WHERE enabled = true) as sources,
-            (SELECT COUNT(*) FROM personas WHERE enabled = true) as personas
+            (SELECT COUNT(*) FROM personas WHERE enabled = true) as personas,
+            (SELECT COUNT(*) FROM summaries) as summaries,
+            (SELECT COUNT(*) FROM viewpoints) as viewpoints,
+            (SELECT COUNT(*) FROM digests) as digests
         `);
         return c.json({
           status: "healthy",
           database: "connected",
           stats: stats.rows[0],
+          openaiKeySet: !!process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
           timestamp: new Date().toISOString(),
         });
       } catch (error: any) {
