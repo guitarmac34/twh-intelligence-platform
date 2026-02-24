@@ -369,16 +369,31 @@ export const apiRoutes: Array<{
     handler: async (c: any) => {
       const mastra = c.get("mastra");
       const logger = mastra?.getLogger();
-      logger?.info("🚀 [API] Manual trigger requested");
+      logger?.info("🚀 [API] Manual trigger requested — running full pipeline async");
 
-      try {
-        // Execute workflow directly, bypassing Inngest
-        const result = await runIntelligenceWorkflowDirect(mastra);
-        return c.json({ success: true, message: "Intelligence workflow completed", result });
-      } catch (error: any) {
-        logger?.error("❌ [API] Trigger failed", { error: error.message, stack: error.stack });
-        return c.json({ success: false, message: error.message }, 500);
-      }
+      // Fire-and-forget: intelligence → viewpoints → digest
+      (async () => {
+        try {
+          console.log("🚀 [Pipeline] Starting intelligence workflow...");
+          const result = await runIntelligenceWorkflowDirect(mastra);
+          console.log("✅ [Pipeline] Intelligence done:", result?.summary?.slice(0, 100));
+
+          console.log("🚀 [Pipeline] Starting viewpoint workflow...");
+          await runViewpointWorkflowDirect(mastra);
+          console.log("✅ [Pipeline] Viewpoints done");
+
+          console.log("🚀 [Pipeline] Starting digest workflow...");
+          await runDigestWorkflowDirect(mastra);
+          console.log("✅ [Pipeline] Digest done — full pipeline complete!");
+        } catch (error: any) {
+          console.error("❌ [Pipeline] Failed:", error.message, error.stack);
+        }
+      })();
+
+      return c.json({
+        success: true,
+        message: "Full pipeline started (intelligence → viewpoints → digest). Processing ~196 articles in batches. Check /api/health for progress.",
+      });
     },
   },
   // ======================================================================

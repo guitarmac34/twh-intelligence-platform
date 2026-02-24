@@ -246,10 +246,17 @@ const filterContentStep = createStep({
   },
 });
 
-// Step 4: Process articles - extract entities and generate summaries
+// Batching config — keeps us under OpenAI rate limits (gpt-4o-mini: ~500 RPM)
+const BATCH_SIZE = parseInt(process.env.BATCH_SIZE || "10", 10);
+const BATCH_DELAY_MS = parseInt(process.env.BATCH_DELAY_MS || "5000", 10); // 5s between batches
+const API_CALL_DELAY_MS = parseInt(process.env.API_CALL_DELAY_MS || "500", 10); // 500ms between calls
+
+function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)); }
+
+// Step 4: Process articles - extract entities and generate summaries (batched)
 const processArticlesStep = createStep({
   id: "process-articles",
-  description: "Processes each new article: extracts entities, normalizes them, and generates AI summaries",
+  description: "Processes each new article in batches: extracts entities, normalizes them, and generates AI summaries",
 
   inputSchema: z.object({
     newArticles: z.array(z.any()),
@@ -274,40 +281,53 @@ const processArticlesStep = createStep({
     }
 
     // Quick API key test before processing all articles
-    if (inputData.newArticles.length > 0) {
-      try {
-        const testResponse = await generateText({
-          model: openai("gpt-4o-mini"),
-          prompt: "Say hello in one word.",
-          maxTokens: 10,
-        });
-        console.log(`✅ [Step 4] OpenAI test passed: "${testResponse.text}"`);
-      } catch (testErr: any) {
-        console.error(`❌ [Step 4] OpenAI API test FAILED:`, testErr.message);
-        throw new Error(`OpenAI API not working: ${testErr.message}`);
-      }
+    try {
+      const testResponse = await generateText({
+        model: openai("gpt-4o-mini"),
+        prompt: "Say hello in one word.",
+        maxTokens: 10,
+      });
+      console.log(`✅ [Step 4] OpenAI test passed: "${testResponse.text}"`);
+    } catch (testErr: any) {
+      console.error(`❌ [Step 4] OpenAI API test FAILED:`, testErr.message);
+      throw new Error(`OpenAI API not working: ${testErr.message}`);
     }
 
     const processedArticles: any[] = [];
     let errors = 0;
+    const totalArticles = inputData.newArticles.length;
+    const totalBatches = Math.ceil(totalArticles / BATCH_SIZE);
 
-    for (const article of inputData.newArticles) {
-      try {
-        logger?.info(`📝 [Step 4] Processing: ${article.title.slice(0, 50)}...`);
+    console.log(`📦 [Step 4] Processing ${totalArticles} articles in ${totalBatches} batches of ${BATCH_SIZE} (${BATCH_DELAY_MS}ms between batches, ${API_CALL_DELAY_MS}ms between API calls)`);
 
-        // 1. Save the article (or use existing ID for re-processing)
-        const articleId = article.existingArticleId || await saveArticle({
-          sourceId: article.sourceId,
-          url: article.url,
-          title: article.title,
-          author: article.author,
-          publishedDate: article.publishedDate,
-          content: article.content,
-          contentHash: article.contentHash,
-        });
+    for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
+      const batchStart = batchIdx * BATCH_SIZE;
+      const batch = inputData.newArticles.slice(batchStart, batchStart + BATCH_SIZE);
 
-        // 2. Extract entities using AI
-        const extractPrompt = `Extract entities from this healthcare IT article.
+      console.log(`\n📦 [Step 4] Batch ${batchIdx + 1}/${totalBatches} — articles ${batchStart + 1}-${batchStart + batch.length} of ${totalArticles}`);
+
+      for (const article of batch) {
+        try {
+          logger?.info(`📝 [Step 4] Processing: ${article.title.slice(0, 50)}...`);
+
+          // 1. Save the article (or use existing ID for re-processing)
+          const articleId = article.existingArticleId || await saveArticle({
+            sourceId: article.sourceId,
+            url: article.url,
+            title: article.title,
+            author: article.author,
+            publishedDate: article.publishedDate,
+            content: article.content,
+            contentHash: article.contentHash,
+          });
+
+          // 2. Extract entities using AI
+          let entitiesExtracted = 0;
+          let extractedOrgNames: string[] = [];
+          try {
+            const extractResponse = await generateText({
+              model: openai("gpt-4o-mini"),
+              prompt: `Extract entities from this healthcare IT article.
 
 ARTICLE TITLE: ${article.title}
 
@@ -324,73 +344,51 @@ Respond with JSON only:
   "organizations": [{"name": "...", "type": "vendor", "confidence": 0.9}],
   "people": [{"name": "...", "title": "...", "organization": "...", "confidence": 0.9}],
   "technologies": [{"name": "...", "category": "EHR", "vendor": "...", "confidence": 0.9}]
-}`;
-
-        let entitiesExtracted = 0;
-        let extractedOrgNames: string[] = [];
-        try {
-          const extractResponse = await generateText({
-            model: openai("gpt-4o-mini"),
-            prompt: extractPrompt,
-            temperature: 0.2,
-          });
-
-          const jsonMatch = extractResponse.text.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            const extracted = JSON.parse(jsonMatch[0]);
-
-            // Normalize entities
-            const normalizedOrgs = (extracted.organizations || []).map((org: any) => {
-              const lowerName = org.name.toLowerCase().trim();
-              const canonical = ORGANIZATION_ALIASES[lowerName];
-              return {
-                canonicalName: canonical || org.name,
-                type: org.type,
-                confidence: org.confidence,
-              };
+}`,
+              temperature: 0.2,
             });
 
-            const normalizedPeople = (extracted.people || []).map((person: any) => {
-              let normalizedOrg = person.organization;
-              if (normalizedOrg) {
-                const lowerOrg = normalizedOrg.toLowerCase().trim();
-                normalizedOrg = ORGANIZATION_ALIASES[lowerOrg] || normalizedOrg;
-              }
-              return {
-                name: person.name,
-                title: person.title,
-                organization: normalizedOrg,
-                confidence: person.confidence,
-              };
-            });
+            await sleep(API_CALL_DELAY_MS);
 
-            const normalizedTech = (extracted.technologies || []).map((tech: any) => {
-              const lowerName = tech.name.toLowerCase().trim();
-              const canonical = TECHNOLOGY_ALIASES[lowerName];
-              return {
-                canonicalName: canonical || tech.name,
-                category: tech.category,
-                vendor: tech.vendor,
-                confidence: tech.confidence,
-              };
-            });
+            const jsonMatch = extractResponse.text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const extracted = JSON.parse(jsonMatch[0]);
 
-            // Save entities
-            await saveEntities(articleId, normalizedOrgs, normalizedPeople, normalizedTech);
-            entitiesExtracted = normalizedOrgs.length + normalizedPeople.length + normalizedTech.length;
-            extractedOrgNames = normalizedOrgs.map((o: any) => o.canonicalName);
+              const normalizedOrgs = (extracted.organizations || []).map((org: any) => {
+                const lowerName = org.name.toLowerCase().trim();
+                const canonical = ORGANIZATION_ALIASES[lowerName];
+                return { canonicalName: canonical || org.name, type: org.type, confidence: org.confidence };
+              });
+
+              const normalizedPeople = (extracted.people || []).map((person: any) => {
+                let normalizedOrg = person.organization;
+                if (normalizedOrg) {
+                  const lowerOrg = normalizedOrg.toLowerCase().trim();
+                  normalizedOrg = ORGANIZATION_ALIASES[lowerOrg] || normalizedOrg;
+                }
+                return { name: person.name, title: person.title, organization: normalizedOrg, confidence: person.confidence };
+              });
+
+              const normalizedTech = (extracted.technologies || []).map((tech: any) => {
+                const lowerName = tech.name.toLowerCase().trim();
+                const canonical = TECHNOLOGY_ALIASES[lowerName];
+                return { canonicalName: canonical || tech.name, category: tech.category, vendor: tech.vendor, confidence: tech.confidence };
+              });
+
+              await saveEntities(articleId, normalizedOrgs, normalizedPeople, normalizedTech);
+              entitiesExtracted = normalizedOrgs.length + normalizedPeople.length + normalizedTech.length;
+              extractedOrgNames = normalizedOrgs.map((o: any) => o.canonicalName);
+            }
+          } catch (e) {
+            console.error("⚠️ [Step 4] Entity extraction failed:", String(e));
           }
-        } catch (e) {
-          console.error("⚠️ [Step 4] Entity extraction failed:", String(e));
-          logger?.warn("⚠️ [Step 4] Entity extraction failed", { error: String(e) });
-        }
 
-        // 3. Generate summary using AI
-        let hasSummary = false;
-        try {
-          const summaryResponse = await generateText({
-            model: openai("gpt-4o-mini"),
-            prompt: `Analyze this healthcare IT article and provide:
+          // 3. Generate summary using AI
+          let hasSummary = false;
+          try {
+            const summaryResponse = await generateText({
+              model: openai("gpt-4o-mini"),
+              prompt: `Analyze this healthcare IT article and provide:
 1. A 2-3 sentence summary of what happened, who is involved, and why it matters
 2. 3-5 key takeaways for healthcare IT sales/marketing teams
 3. Topic tags (choose from: cybersecurity, AI, EHR, interoperability, telehealth, analytics, cloud, regulation, M&A, partnership, funding, leadership)
@@ -410,54 +408,59 @@ Respond in this exact JSON format:
   "relevanceScore": 8,
   "qualityRating": 7
 }`,
-            temperature: 0.3,
+              temperature: 0.3,
+            });
+
+            await sleep(API_CALL_DELAY_MS);
+
+            const jsonMatch = summaryResponse.text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+              const summaryData = JSON.parse(jsonMatch[0]);
+              await saveSummary(
+                articleId,
+                summaryData.summary,
+                summaryData.takeaways || [],
+                summaryData.tags || [],
+                summaryData.relevanceScore || 5,
+                summaryData.qualityRating
+              );
+              hasSummary = true;
+            }
+          } catch (e) {
+            console.error("⚠️ [Step 4] Summary generation failed:", String(e));
+          }
+
+          processedArticles.push({
+            articleId,
+            title: article.title,
+            entitiesExtracted,
+            hasSummary,
+            organizations: extractedOrgNames,
           });
 
-          const jsonMatch = summaryResponse.text.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            const summaryData = JSON.parse(jsonMatch[0]);
-            await saveSummary(
-              articleId,
-              summaryData.summary,
-              summaryData.takeaways || [],
-              summaryData.tags || [],
-              summaryData.relevanceScore || 5,
-              summaryData.qualityRating
-            );
-            hasSummary = true;
-          }
-        } catch (e) {
-          console.error("⚠️ [Step 4] Summary generation failed:", String(e));
-          logger?.warn("⚠️ [Step 4] Summary generation failed", { error: String(e) });
+          logger?.info(`✅ [Step 4] Processed article ${processedArticles.length}/${totalArticles}`, {
+            articleId,
+            entities: entitiesExtracted,
+            hasSummary,
+          });
+        } catch (error) {
+          errors++;
+          const errorMessage = error instanceof Error ? error.message : String(error);
+          logger?.error(`❌ [Step 4] Error processing article`, {
+            title: article.title,
+            error: errorMessage,
+          });
         }
+      }
 
-        processedArticles.push({
-          articleId,
-          title: article.title,
-          entitiesExtracted,
-          hasSummary,
-          organizations: extractedOrgNames,
-        });
-
-        logger?.info(`✅ [Step 4] Processed article`, {
-          articleId,
-          entities: entitiesExtracted,
-          hasSummary,
-        });
-      } catch (error) {
-        errors++;
-        const errorMessage = error instanceof Error ? error.message : String(error);
-        logger?.error(`❌ [Step 4] Error processing article`, {
-          title: article.title,
-          error: errorMessage,
-        });
+      // Delay between batches (skip after the last batch)
+      if (batchIdx < totalBatches - 1) {
+        console.log(`⏳ [Step 4] Batch ${batchIdx + 1} complete. Waiting ${BATCH_DELAY_MS}ms before next batch...`);
+        await sleep(BATCH_DELAY_MS);
       }
     }
 
-    logger?.info("✅ [Step 4] Article processing complete", {
-      processed: processedArticles.length,
-      errors,
-    });
+    console.log(`✅ [Step 4] All batches complete: ${processedArticles.length} processed, ${errors} errors`);
 
     return {
       processedArticles,
@@ -502,14 +505,26 @@ const scoreAndLinkStep = createStep({
     let articlesScored = 0;
     let accountsLinked = 0;
 
-    for (const article of inputData.processedArticles) {
-      if (!article.hasSummary || !article.articleId) continue;
+    const scorableArticles = inputData.processedArticles.filter(
+      (a: any) => a.hasSummary && a.articleId
+    );
+    const totalToScore = scorableArticles.length;
+    const scoreBatches = Math.ceil(totalToScore / BATCH_SIZE);
 
-      // Persona scoring via GPT-4o-mini
-      try {
-        const scoreResponse = await generateText({
-          model: openai("gpt-4o-mini"),
-          prompt: `Rate the relevance of this healthcare IT article for each persona (1-10) and give a one-sentence reason.
+    console.log(`📦 [Step 5] Scoring ${totalToScore} articles in ${scoreBatches} batches`);
+
+    for (let batchIdx = 0; batchIdx < scoreBatches; batchIdx++) {
+      const batchStart = batchIdx * BATCH_SIZE;
+      const batch = scorableArticles.slice(batchStart, batchStart + BATCH_SIZE);
+
+      console.log(`📦 [Step 5] Scoring batch ${batchIdx + 1}/${scoreBatches}`);
+
+      for (const article of batch) {
+        // Persona scoring via GPT-4o-mini
+        try {
+          const scoreResponse = await generateText({
+            model: openai("gpt-4o-mini"),
+            prompt: `Rate the relevance of this healthcare IT article for each persona (1-10) and give a one-sentence reason.
 
 ARTICLE: ${article.title}
 
@@ -534,40 +549,50 @@ Respond in JSON:
     {"persona": "output-general-hit", "score": 7, "reason": "..."}
   ]
 }`,
-          temperature: 0.2,
-        });
+            temperature: 0.2,
+          });
 
-        const jsonMatch = scoreResponse.text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-          const parsed = JSON.parse(jsonMatch[0]);
-          const scores = (parsed.scores || [])
-            .filter((s: any) => ALL_PERSONA_SLUGS.includes(s.persona))
-            .map((s: any) => ({
-              personaSlug: s.persona,
-              relevanceScore: Math.min(10, Math.max(1, Math.round(s.score))),
-              relevanceReason: s.reason || "",
-            }));
+          await sleep(API_CALL_DELAY_MS);
 
-          if (scores.length > 0) {
-            await savePersonaScores(article.articleId, scores);
-            articlesScored++;
+          const jsonMatch = scoreResponse.text.match(/\{[\s\S]*\}/);
+          if (jsonMatch) {
+            const parsed = JSON.parse(jsonMatch[0]);
+            const scores = (parsed.scores || [])
+              .filter((s: any) => ALL_PERSONA_SLUGS.includes(s.persona))
+              .map((s: any) => ({
+                personaSlug: s.persona,
+                relevanceScore: Math.min(10, Math.max(1, Math.round(s.score))),
+                relevanceReason: s.reason || "",
+              }));
+
+            if (scores.length > 0) {
+              await savePersonaScores(article.articleId, scores);
+              articlesScored++;
+            }
           }
+        } catch (e) {
+          logger?.warn("⚠️ [Step 5] Persona scoring failed", { articleId: article.articleId, error: String(e) });
         }
-      } catch (e) {
-        logger?.warn("⚠️ [Step 5] Persona scoring failed", { articleId: article.articleId, error: String(e) });
+
+        // Auto-link to accounts based on extracted organizations
+        try {
+          if (article.organizations && article.organizations.length > 0) {
+            await autoLinkArticleToAccounts(article.articleId, article.organizations);
+            accountsLinked++;
+          }
+        } catch (e) {
+          logger?.warn("⚠️ [Step 5] Account auto-link failed", { error: String(e) });
+        }
       }
 
-      // Auto-link to accounts based on extracted organizations
-      try {
-        if (article.organizations && article.organizations.length > 0) {
-          await autoLinkArticleToAccounts(article.articleId, article.organizations);
-          accountsLinked++;
-        }
-      } catch (e) {
-        logger?.warn("⚠️ [Step 5] Account auto-link failed", { error: String(e) });
+      // Delay between batches
+      if (batchIdx < scoreBatches - 1) {
+        console.log(`⏳ [Step 5] Batch ${batchIdx + 1} complete. Waiting ${BATCH_DELAY_MS}ms...`);
+        await sleep(BATCH_DELAY_MS);
       }
     }
 
+    console.log(`✅ [Step 5] Scoring complete: ${articlesScored} scored, ${accountsLinked} account links`);
     logger?.info("✅ [Step 5] Scoring and linking complete", { articlesScored, accountsLinked });
 
     return {
