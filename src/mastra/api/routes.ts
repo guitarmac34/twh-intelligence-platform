@@ -373,14 +373,11 @@ export const apiRoutes: Array<{
 
       try {
         // Execute workflow directly, bypassing Inngest
-        // Fire-and-forget so the API responds immediately
-        runIntelligenceWorkflowDirect(mastra).catch((err: any) => {
-          logger?.error("❌ [API] Intelligence workflow failed", { error: err.message });
-        });
-        return c.json({ success: true, message: "Intelligence workflow started" });
+        const result = await runIntelligenceWorkflowDirect(mastra);
+        return c.json({ success: true, message: "Intelligence workflow completed", result });
       } catch (error: any) {
-        logger?.error("❌ [API] Trigger failed", { error: error.message });
-        return c.json({ success: false, message: error.message }, 500);
+        logger?.error("❌ [API] Trigger failed", { error: error.message, stack: error.stack });
+        return c.json({ success: false, message: error.message, stack: error.stack }, 500);
       }
     },
   },
