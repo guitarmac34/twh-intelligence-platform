@@ -364,6 +364,40 @@ export const apiRoutes: Array<{
     },
   },
   {
+    path: "/api/test-openai",
+    method: "GET",
+    handler: async (c: any) => {
+      try {
+        const apiKey = process.env.AI_INTEGRATIONS_OPENAI_API_KEY;
+        const trimmedKey = apiKey?.trim();
+        const openaiTest = createOpenAI({
+          baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
+          apiKey: trimmedKey,
+        });
+        const response = await generateText({
+          model: openaiTest("gpt-4o-mini"),
+          prompt: "Say hello in one word.",
+          maxTokens: 10,
+        });
+        return c.json({
+          success: true,
+          response: response.text,
+          keyLength: apiKey?.length,
+          trimmedLength: trimmedKey?.length,
+          keyHadWhitespace: apiKey?.length !== trimmedKey?.length,
+          keyPrefix: trimmedKey?.slice(0, 10),
+        });
+      } catch (error: any) {
+        return c.json({
+          success: false,
+          error: error.message,
+          keyLength: process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.length,
+          trimmedLength: process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.trim()?.length,
+        }, 500);
+      }
+    },
+  },
+  {
     path: "/api/trigger",
     method: "POST",
     handler: async (c: any) => {
