@@ -655,29 +655,61 @@ export const intelligenceWorkflow = createWorkflow({
 
 // Direct execution function — bypasses Inngest for API triggers and startup
 export async function runIntelligenceWorkflowDirect(mastra?: any) {
-  const ctx = { mastra };
   console.log("🚀 [Direct] Starting intelligence workflow...");
 
-  // Step 1: Load sources
-  const step1 = await loadSourcesStep.execute({ inputData: {}, mastra: ctx.mastra } as any);
-  if (!step1.success) throw new Error(step1.error || "Failed to load sources");
+  // Minimal context that satisfies the execute function signature
+  const makeCtx = (inputData: any) => ({
+    inputData,
+    mastra,
+    runId: `direct-${Date.now()}`,
+    resourceId: undefined,
+    workflowId: "twh-intelligence-workflow",
+    state: {},
+    setState: () => {},
+    resumeData: undefined,
+    runCount: 0,
+    tracingContext: {} as any,
+    getInitData: () => ({}),
+    getStepResult: () => ({}),
+    suspend: async () => {},
+    bail: () => {},
+    abort: () => {},
+    resume: undefined,
+    engine: {} as any,
+    abortSignal: new AbortController().signal,
+    writer: {} as any,
+    runtimeContext: {} as any,
+  });
 
-  // Step 2: Monitor sources
-  const step2 = await monitorSourcesStep.execute({ inputData: step1, mastra: ctx.mastra } as any);
-  if (!step2.success) throw new Error(step2.error || "Failed to monitor sources");
+  try {
+    // Step 1: Load sources
+    const step1 = await loadSourcesStep.execute(makeCtx({}) as any);
+    if (!step1.success) throw new Error(step1.error || "Failed to load sources");
+    console.log(`📋 [Direct] Step 1 done: ${step1.sources.length} sources loaded`);
 
-  // Step 3: Filter content
-  const step3 = await filterContentStep.execute({ inputData: step2, mastra: ctx.mastra } as any);
+    // Step 2: Monitor sources
+    const step2 = await monitorSourcesStep.execute(makeCtx(step1) as any);
+    if (!step2.success) throw new Error(step2.error || "Failed to monitor sources");
+    console.log(`📰 [Direct] Step 2 done: ${step2.articles.length} articles scraped from ${step2.sourcesProcessed} sources`);
 
-  // Step 4: Process articles
-  const step4 = await processArticlesStep.execute({ inputData: step3, mastra: ctx.mastra } as any);
+    // Step 3: Filter content
+    const step3 = await filterContentStep.execute(makeCtx(step2) as any);
+    console.log(`🔄 [Direct] Step 3 done: ${step3.newArticles.length} new articles, ${step3.duplicatesSkipped} duplicates skipped`);
 
-  // Step 5: Score and link
-  const step5 = await scoreAndLinkStep.execute({ inputData: step4, mastra: ctx.mastra } as any);
+    // Step 4: Process articles
+    const step4 = await processArticlesStep.execute(makeCtx(step3) as any);
+    console.log(`🔬 [Direct] Step 4 done: ${step4.totalProcessed} articles processed, ${step4.errors} errors`);
 
-  // Step 6: Store results
-  const step6 = await storeResultsStep.execute({ inputData: step5, mastra: ctx.mastra } as any);
+    // Step 5: Score and link
+    const step5 = await scoreAndLinkStep.execute(makeCtx(step4) as any);
+    console.log(`📊 [Direct] Step 5 done: scoring complete`);
 
-  console.log("✅ [Direct] Intelligence workflow complete", { articlesProcessed: step6.articlesProcessed });
-  return step6;
+    // Step 6: Store results
+    const step6 = await storeResultsStep.execute(makeCtx(step5) as any);
+    console.log("✅ [Direct] Intelligence workflow complete", { articlesProcessed: step6.articlesProcessed });
+    return step6;
+  } catch (error) {
+    console.error("❌ [Direct] Intelligence workflow failed:", error);
+    throw error;
+  }
 }

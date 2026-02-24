@@ -358,9 +358,22 @@ export const digestWorkflow = createWorkflow({
 // Direct execution function — bypasses Inngest for API triggers
 export async function runDigestWorkflowDirect(mastra?: any) {
   console.log("🚀 [Direct] Starting digest workflow...");
-  const step1 = await gatherArticlesStep.execute({ inputData: {}, mastra } as any);
-  const step2 = await generateDigestsStep.execute({ inputData: step1, mastra } as any);
-  const step3 = await deliverDigestsStep.execute({ inputData: step2, mastra } as any);
-  console.log("✅ [Direct] Digest workflow complete");
-  return step3;
+  const makeCtx = (inputData: any) => ({
+    inputData, mastra, runId: `direct-${Date.now()}`, resourceId: undefined,
+    workflowId: "twh-digest-workflow", state: {}, setState: () => {},
+    resumeData: undefined, runCount: 0, tracingContext: {} as any,
+    getInitData: () => ({}), getStepResult: () => ({}), suspend: async () => {},
+    bail: () => {}, abort: () => {}, resume: undefined, engine: {} as any,
+    abortSignal: new AbortController().signal, writer: {} as any, runtimeContext: {} as any,
+  });
+  try {
+    const step1 = await gatherArticlesStep.execute(makeCtx({}) as any);
+    const step2 = await generateDigestsStep.execute(makeCtx(step1) as any);
+    const step3 = await deliverDigestsStep.execute(makeCtx(step2) as any);
+    console.log("✅ [Direct] Digest workflow complete");
+    return step3;
+  } catch (error) {
+    console.error("❌ [Direct] Digest workflow failed:", error);
+    throw error;
+  }
 }

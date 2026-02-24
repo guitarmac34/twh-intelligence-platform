@@ -478,10 +478,23 @@ export const viewpointWorkflow = createWorkflow({
 // Direct execution function — bypasses Inngest for API triggers
 export async function runViewpointWorkflowDirect(mastra?: any) {
   console.log("🚀 [Direct] Starting viewpoint workflow...");
-  const step1 = await findArticlesStep.execute({ inputData: {}, mastra } as any);
-  const step2 = await generateViewpointsStep.execute({ inputData: step1, mastra } as any);
-  const step3 = await generateBriefsStep.execute({ inputData: step2, mastra } as any);
-  const step4 = await logViewpointCompletionStep.execute({ inputData: step3, mastra } as any);
-  console.log("✅ [Direct] Viewpoint workflow complete");
-  return step4;
+  const makeCtx = (inputData: any) => ({
+    inputData, mastra, runId: `direct-${Date.now()}`, resourceId: undefined,
+    workflowId: "twh-viewpoint-workflow", state: {}, setState: () => {},
+    resumeData: undefined, runCount: 0, tracingContext: {} as any,
+    getInitData: () => ({}), getStepResult: () => ({}), suspend: async () => {},
+    bail: () => {}, abort: () => {}, resume: undefined, engine: {} as any,
+    abortSignal: new AbortController().signal, writer: {} as any, runtimeContext: {} as any,
+  });
+  try {
+    const step1 = await findArticlesStep.execute(makeCtx({}) as any);
+    const step2 = await generateViewpointsStep.execute(makeCtx(step1) as any);
+    const step3 = await generateBriefsStep.execute(makeCtx(step2) as any);
+    const step4 = await logViewpointCompletionStep.execute(makeCtx(step3) as any);
+    console.log("✅ [Direct] Viewpoint workflow complete");
+    return step4;
+  } catch (error) {
+    console.error("❌ [Direct] Viewpoint workflow failed:", error);
+    throw error;
+  }
 }
