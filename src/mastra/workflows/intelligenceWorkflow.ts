@@ -315,7 +315,7 @@ Respond with JSON only:
         let extractedOrgNames: string[] = [];
         try {
           const extractResponse = await generateText({
-            model: openai("gpt-4.1-nano"),
+            model: openai("gpt-4o-mini"),
             prompt: extractPrompt,
             temperature: 0.2,
           });
@@ -492,7 +492,7 @@ const scoreAndLinkStep = createStep({
       // Persona scoring via GPT-4o-mini
       try {
         const scoreResponse = await generateText({
-          model: openai("gpt-4.1-nano"),
+          model: openai("gpt-4o-mini"),
           prompt: `Rate the relevance of this healthcare IT article for each persona (1-10) and give a one-sentence reason.
 
 ARTICLE: ${article.title}

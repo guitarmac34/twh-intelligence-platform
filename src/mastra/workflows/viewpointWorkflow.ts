@@ -182,7 +182,7 @@ Respond with valid JSON only:
 }`;
 
           const response = await generateText({
-            model: openai("gpt-4.1-mini"),
+            model: openai("gpt-4o-mini"),
             system: systemPrompt,
             prompt: userPrompt,
             temperature: 0.7,
@@ -302,7 +302,7 @@ const generateBriefsStep = createStep({
           );
 
           const response = await generateText({
-            model: openai("gpt-4.1-mini"),
+            model: openai("gpt-4o-mini"),
             prompt: briefPrompt,
             temperature: 0.5,
           });

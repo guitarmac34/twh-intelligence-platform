@@ -161,7 +161,7 @@ Respond in JSON:
 }`;
 
         const response = await generateText({
-          model: openai("gpt-4.1"),
+          model: openai("gpt-4o"),
           prompt: digestPrompt,
           temperature: 0.6,
         });
@@ -182,7 +182,7 @@ Respond in JSON:
           digestText: result.digestText,
           articleIds,
           highlights: result.highlights || [],
-          modelUsed: "gpt-4.1",
+          modelUsed: "gpt-4o",
         });
 
         digests.push({

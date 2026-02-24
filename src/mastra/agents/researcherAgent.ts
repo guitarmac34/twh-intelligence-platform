@@ -64,7 +64,7 @@ You have tools available for:
 
 Always log your actions and maintain accountability through structured logging.`,
 
-  model: openai("gpt-4.1-mini"),
+  model: openai("gpt-4o-mini"),
 
   tools: {
     webScraperTool,
