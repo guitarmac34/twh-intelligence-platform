@@ -373,16 +373,16 @@ export const apiRoutes: Array<{
         const workflow = mastra?.getWorkflow("intelligenceWorkflow");
         if (workflow) {
           const run = await workflow.createRunAsync();
-          run.start({ inputData: {} });
-          logger?.info("✅ [API] Workflow started", { runId: run?.runId });
-          return c.json({ success: true, message: "Workflow triggered", runId: run?.runId });
+          const result = await run.start({ inputData: {} });
+          logger?.info("✅ [API] Workflow completed", { runId: run?.runId });
+          return c.json({ success: true, message: "Workflow completed", runId: run?.runId, result });
         } else {
           logger?.error("❌ [API] Workflow not found");
           return c.json({ success: false, message: "Workflow not found" }, 404);
         }
       } catch (error: any) {
-        logger?.error("❌ [API] Trigger failed", { error: error.message });
-        return c.json({ success: false, message: error.message }, 500);
+        logger?.error("❌ [API] Trigger failed", { error: error.message, stack: error.stack });
+        return c.json({ success: false, message: error.message, stack: error.stack }, 500);
       }
     },
   },
