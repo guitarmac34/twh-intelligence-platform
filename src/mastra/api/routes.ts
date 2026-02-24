@@ -14,6 +14,9 @@ import {
 } from "../db/operations";
 import { buildPersonaPrompt, getIndividualPersonaSlugs } from "../personas";
 import { getSlackClient, extractUrlsFromSlackMessage, postViewpointToSlack } from "../tools/slackIntegration";
+import { runIntelligenceWorkflowDirect } from "../workflows/intelligenceWorkflow";
+import { runViewpointWorkflowDirect } from "../workflows/viewpointWorkflow";
+import { runDigestWorkflowDirect } from "../workflows/digestWorkflow";
 
 type HttpMethod = "GET" | "POST" | "PUT" | "DELETE" | "PATCH" | "OPTIONS" | "HEAD" | "ALL";
 
@@ -369,20 +372,15 @@ export const apiRoutes: Array<{
       logger?.info("🚀 [API] Manual trigger requested");
 
       try {
-        // Use the Mastra workflow API to start the workflow
-        const workflow = mastra?.getWorkflow("intelligenceWorkflow");
-        if (workflow) {
-          const run = await workflow.createRunAsync();
-          const result = await run.start({ inputData: {} });
-          logger?.info("✅ [API] Workflow completed", { runId: run?.runId });
-          return c.json({ success: true, message: "Workflow completed", runId: run?.runId, result });
-        } else {
-          logger?.error("❌ [API] Workflow not found");
-          return c.json({ success: false, message: "Workflow not found" }, 404);
-        }
+        // Execute workflow directly, bypassing Inngest
+        // Fire-and-forget so the API responds immediately
+        runIntelligenceWorkflowDirect(mastra).catch((err: any) => {
+          logger?.error("❌ [API] Intelligence workflow failed", { error: err.message });
+        });
+        return c.json({ success: true, message: "Intelligence workflow started" });
       } catch (error: any) {
-        logger?.error("❌ [API] Trigger failed", { error: error.message, stack: error.stack });
-        return c.json({ success: false, message: error.message, stack: error.stack }, 500);
+        logger?.error("❌ [API] Trigger failed", { error: error.message });
+        return c.json({ success: false, message: error.message }, 500);
       }
     },
   },
@@ -1210,15 +1208,10 @@ Generate the email brief in this JSON format:
       logger?.info("🚀 [API] Manual viewpoint generation requested");
 
       try {
-        const workflow = mastra?.getWorkflow("viewpointWorkflow");
-        if (workflow) {
-          const run = await workflow.createRunAsync();
-          run.start({ inputData: {} });
-          logger?.info("✅ [API] Viewpoint workflow started", { runId: run?.runId });
-          return c.json({ success: true, message: "Viewpoint workflow triggered", runId: run?.runId });
-        } else {
-          return c.json({ success: false, message: "Viewpoint workflow not found" }, 404);
-        }
+        runViewpointWorkflowDirect(mastra).catch((err: any) => {
+          logger?.error("❌ [API] Viewpoint workflow failed", { error: err.message });
+        });
+        return c.json({ success: true, message: "Viewpoint workflow started" });
       } catch (error: any) {
         logger?.error("❌ [API] Viewpoint trigger failed", { error: error.message });
         return c.json({ success: false, message: error.message }, 500);
@@ -1310,14 +1303,10 @@ Generate the email brief in this JSON format:
       logger?.info("🚀 [API] Manual digest generation requested");
 
       try {
-        const workflow = mastra?.getWorkflow("digestWorkflow");
-        if (workflow) {
-          const run = await workflow.createRunAsync();
-          run.start({ inputData: {} });
-          return c.json({ success: true, message: "Digest workflow triggered", runId: run?.runId });
-        } else {
-          return c.json({ success: false, message: "Digest workflow not found" }, 404);
-        }
+        runDigestWorkflowDirect(mastra).catch((err: any) => {
+          logger?.error("❌ [API] Digest workflow failed", { error: err.message });
+        });
+        return c.json({ success: true, message: "Digest workflow started" });
       } catch (error: any) {
         return c.json({ success: false, message: error.message }, 500);
       }

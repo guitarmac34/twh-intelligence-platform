@@ -354,3 +354,13 @@ export const digestWorkflow = createWorkflow({
   .then(generateDigestsStep as any)
   .then(deliverDigestsStep as any)
   .commit();
+
+// Direct execution function — bypasses Inngest for API triggers
+export async function runDigestWorkflowDirect(mastra?: any) {
+  console.log("🚀 [Direct] Starting digest workflow...");
+  const step1 = await gatherArticlesStep.execute({ inputData: {}, mastra } as any);
+  const step2 = await generateDigestsStep.execute({ inputData: step1, mastra } as any);
+  const step3 = await deliverDigestsStep.execute({ inputData: step2, mastra } as any);
+  console.log("✅ [Direct] Digest workflow complete");
+  return step3;
+}

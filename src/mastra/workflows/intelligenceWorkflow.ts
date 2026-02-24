@@ -652,3 +652,32 @@ export const intelligenceWorkflow = createWorkflow({
   .then(scoreAndLinkStep as any)
   .then(storeResultsStep as any)
   .commit();
+
+// Direct execution function — bypasses Inngest for API triggers and startup
+export async function runIntelligenceWorkflowDirect(mastra?: any) {
+  const ctx = { mastra };
+  console.log("🚀 [Direct] Starting intelligence workflow...");
+
+  // Step 1: Load sources
+  const step1 = await loadSourcesStep.execute({ inputData: {}, mastra: ctx.mastra } as any);
+  if (!step1.success) throw new Error(step1.error || "Failed to load sources");
+
+  // Step 2: Monitor sources
+  const step2 = await monitorSourcesStep.execute({ inputData: step1, mastra: ctx.mastra } as any);
+  if (!step2.success) throw new Error(step2.error || "Failed to monitor sources");
+
+  // Step 3: Filter content
+  const step3 = await filterContentStep.execute({ inputData: step2, mastra: ctx.mastra } as any);
+
+  // Step 4: Process articles
+  const step4 = await processArticlesStep.execute({ inputData: step3, mastra: ctx.mastra } as any);
+
+  // Step 5: Score and link
+  const step5 = await scoreAndLinkStep.execute({ inputData: step4, mastra: ctx.mastra } as any);
+
+  // Step 6: Store results
+  const step6 = await storeResultsStep.execute({ inputData: step5, mastra: ctx.mastra } as any);
+
+  console.log("✅ [Direct] Intelligence workflow complete", { articlesProcessed: step6.articlesProcessed });
+  return step6;
+}

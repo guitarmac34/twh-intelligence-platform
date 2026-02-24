@@ -474,3 +474,14 @@ export const viewpointWorkflow = createWorkflow({
   .then(generateBriefsStep as any)
   .then(logViewpointCompletionStep as any)
   .commit();
+
+// Direct execution function — bypasses Inngest for API triggers
+export async function runViewpointWorkflowDirect(mastra?: any) {
+  console.log("🚀 [Direct] Starting viewpoint workflow...");
+  const step1 = await findArticlesStep.execute({ inputData: {}, mastra } as any);
+  const step2 = await generateViewpointsStep.execute({ inputData: step1, mastra } as any);
+  const step3 = await generateBriefsStep.execute({ inputData: step2, mastra } as any);
+  const step4 = await logViewpointCompletionStep.execute({ inputData: step3, mastra } as any);
+  console.log("✅ [Direct] Viewpoint workflow complete");
+  return step4;
+}

@@ -12,6 +12,7 @@ import { sharedPostgresStorage } from "./storage";
 import { inngest, inngestServe } from "./inngest";
 import { apiRoutes } from "./api/routes";
 import { initializeDatabase } from "./db/operations";
+import { runIntelligenceWorkflowDirect } from "./workflows/intelligenceWorkflow";
 
 // ======================================================================
 // IMPORT AGENTS AND WORKFLOWS
@@ -220,17 +221,9 @@ initializeDatabase()
       const articleCount = parseInt(result.rows[0]?.count || "0", 10);
       if (articleCount === 0) {
         console.log("📡 [Startup] No articles found — triggering initial intelligence workflow...");
-        const wf = mastra.getWorkflow("intelligenceWorkflow");
-        if (wf) {
-          wf.createRunAsync().then((run: any) => {
-            console.log("✅ [Startup] Initial intelligence workflow run created", { runId: run?.runId });
-            run.start({ inputData: {} }).catch((err: any) => {
-              console.error("❌ [Startup] Workflow run failed:", err);
-            });
-          }).catch((err: any) => {
-            console.error("❌ [Startup] Failed to create workflow run:", err);
-          });
-        }
+        runIntelligenceWorkflowDirect(mastra).catch((err: any) => {
+          console.error("❌ [Startup] Intelligence workflow failed:", err);
+        });
       } else {
         console.log(`✅ [Startup] ${articleCount} articles already exist, skipping initial scrape`);
       }
