@@ -91,7 +91,7 @@ Respond with valid JSON only in this exact format:
 }`;
 
       const response = await generateText({
-        model: openai("gpt-4o-mini"),
+        model: openai("gpt-4.1-nano"),
         prompt,
         temperature: 0.2,
       });

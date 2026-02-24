@@ -71,7 +71,7 @@ Respond with valid JSON only in this exact format:
 The viewpoint should feel like a genuine segment from your show, not a generic AI analysis. Speak as yourself.`;
 
       const response = await generateText({
-        model: openai("gpt-4o-mini"),
+        model: openai("gpt-4.1-mini"),
         system: systemPrompt,
         prompt: userPrompt,
         temperature: 0.7,
@@ -169,7 +169,7 @@ Respond with valid JSON only in this exact format:
 }`;
 
       const response = await generateText({
-        model: openai("gpt-4o-mini"),
+        model: openai("gpt-4.1-mini"),
         system: systemPrompt,
         prompt: userPrompt,
         temperature: 0.7,

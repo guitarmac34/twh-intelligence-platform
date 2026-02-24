@@ -519,7 +519,7 @@ export const apiRoutes: Array<{
             // Extract entities
             try {
               const extractResponse = await generateText({
-                model: openai("gpt-4o-mini"),
+                model: openai("gpt-4.1-mini"),
                 prompt: `Extract entities from this healthcare IT article.
 TITLE: ${title}
 CONTENT: ${content.slice(0, 4000)}
@@ -544,7 +544,7 @@ Respond with JSON only:
             let summaryData: any = null;
             try {
               const summaryResponse = await generateText({
-                model: openai("gpt-4o-mini"),
+                model: openai("gpt-4.1-mini"),
                 prompt: `Analyze this healthcare IT article:
 TITLE: ${title}
 CONTENT: ${content.slice(0, 3000)}
@@ -571,7 +571,7 @@ Respond in JSON:
                 try {
                   const systemPrompt = buildPersonaPrompt(persona.slug);
                   const vpResponse = await generateText({
-                    model: openai("gpt-4o-mini"),
+                    model: openai("gpt-4.1-mini"),
                     system: systemPrompt,
                     prompt: `Analyze this healthcare IT article from your unique perspective:
 ARTICLE TITLE: ${title}
@@ -610,7 +610,7 @@ Respond with valid JSON only:
 
                   if (billVp && drexVp && sarahVp && newsdayPersona.rows[0]) {
                     const rtResponse = await generateText({
-                      model: openai("gpt-4o-mini"),
+                      model: openai("gpt-4.1-mini"),
                       system: buildPersonaPrompt("newsday"),
                       prompt: `Generate a Newsday roundtable discussion.
 ARTICLE TITLE: ${title}
@@ -752,7 +752,7 @@ Respond with JSON: {"viewpoint": "4-6 paragraph narrative.", "keyInsights": ["in
         let entitiesExtracted = 0;
         try {
           const extractResponse = await generateText({
-            model: openai("gpt-4o-mini"),
+            model: openai("gpt-4.1-mini"),
             prompt: `Extract entities from this healthcare IT article.
 
 ARTICLE TITLE: ${body.title}
@@ -805,7 +805,7 @@ Respond with JSON only:
         let summaryData: any = null;
         try {
           const summaryResponse = await generateText({
-            model: openai("gpt-4o-mini"),
+            model: openai("gpt-4.1-mini"),
             prompt: `Analyze this healthcare IT article:
 
 TITLE: ${body.title}
@@ -847,7 +847,7 @@ Respond in JSON:
             try {
               const systemPrompt = buildPersonaPrompt(persona.slug);
               const vpResponse = await generateText({
-                model: openai("gpt-4o-mini"),
+                model: openai("gpt-4.1-mini"),
                 system: systemPrompt,
                 prompt: `Analyze this healthcare IT article from your unique perspective:
 
@@ -906,7 +906,7 @@ Respond with valid JSON only:
 
                 if (newsdayPersona.rows[0]) {
                   const rtResponse = await generateText({
-                    model: openai("gpt-4o-mini"),
+                    model: openai("gpt-4.1-mini"),
                     system: buildPersonaPrompt("newsday"),
                     prompt: `Generate a Newsday roundtable discussion about this article.
 
@@ -1085,7 +1085,7 @@ Generate the email brief in this JSON format:
 }`;
 
         const response = await generateText({
-          model: openai("gpt-4o-mini"),
+          model: openai("gpt-4.1-mini"),
           prompt: briefPrompt,
           temperature: 0.6,
         });
@@ -1492,7 +1492,7 @@ Respond in JSON:
 }`;
 
         const response = await generateText({
-          model: openaiClient("gpt-4o-mini"),
+          model: openaiClient("gpt-4.1"),
           prompt: briefPrompt,
           temperature: 0.5,
         });
