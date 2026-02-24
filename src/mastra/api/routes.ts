@@ -372,86 +372,19 @@ export const apiRoutes: Array<{
       logger?.info("🚀 [API] Manual trigger requested");
 
       try {
-        // Quick inline test: run steps directly to see where articles are lost
-        const { initializeDatabase, getSources, scrapeRssFeed, scrapeHtmlPage } = await import("../db/operations");
-        await initializeDatabase();
-        const sources = await getSources();
-
-        const debugResults: any = { sourcesCount: sources.length, sourceNames: sources.map((s: any) => s.name) };
-
-        // Try scraping first source
-        if (sources.length > 0) {
-          const firstSource = sources[0];
-          try {
-            let articles;
-            if (firstSource.type === "rss" && firstSource.rss_url) {
-              articles = await scrapeRssFeed(firstSource.rss_url, 5);
-            } else {
-              articles = await scrapeHtmlPage(firstSource.url, firstSource.scrape_selector, 5);
-            }
-            debugResults.firstSourceName = firstSource.name;
-            debugResults.firstSourceArticles = articles.length;
-            debugResults.firstTitle = articles[0]?.title;
-          } catch (e: any) {
-            debugResults.scrapeError = e.message;
-          }
-        }
-
-        // Now run the full workflow
-        const result = await runIntelligenceWorkflowDirect(mastra);
-        return c.json({ success: true, message: "Intelligence workflow completed", result, debugResults });
+        // Execute workflow directly, bypassing Inngest
+        runIntelligenceWorkflowDirect(mastra).catch((err: any) => {
+          logger?.error("❌ [API] Intelligence workflow failed", { error: err.message });
+        });
+        return c.json({ success: true, message: "Intelligence workflow started" });
       } catch (error: any) {
-        logger?.error("❌ [API] Trigger failed", { error: error.message, stack: error.stack });
-        return c.json({ success: false, message: error.message, stack: error.stack }, 500);
+        logger?.error("❌ [API] Trigger failed", { error: error.message });
+        return c.json({ success: false, message: error.message }, 500);
       }
     },
   },
   // ======================================================================
   // SLACK INTEGRATION
-  // Debug: test scraping a single source
-  {
-    path: "/api/debug/scrape-test",
-    method: "GET" as const,
-    handler: async (c: any) => {
-      const { scrapeRssFeed, scrapeHtmlPage, getSources } = await import("../db/operations");
-      try {
-        const sources = await getSources();
-        if (sources.length === 0) return c.json({ error: "No sources" });
-
-        // Also test direct step execution
-        const { runIntelligenceWorkflowDirect } = await import("../workflows/intelligenceWorkflow");
-        let stepDebug: any = {};
-        try {
-          const { initializeDatabase } = await import("../db/operations");
-          await initializeDatabase();
-          const allSources = await getSources();
-          stepDebug.sourcesInDb = allSources.length;
-          stepDebug.sourceNames = allSources.map((s: any) => s.name);
-        } catch (e: any) {
-          stepDebug.error = e.message;
-        }
-
-        const results: any[] = [];
-        // Test first 3 sources
-        for (const source of sources.slice(0, 3)) {
-          try {
-            let articles;
-            if (source.type === "rss" && source.rss_url) {
-              articles = await scrapeRssFeed(source.rss_url, 3);
-            } else {
-              articles = await scrapeHtmlPage(source.url, source.scrape_selector, 3);
-            }
-            results.push({ source: source.name, type: source.type, articleCount: articles.length, firstTitle: articles[0]?.title || "none" });
-          } catch (e: any) {
-            results.push({ source: source.name, type: source.type, error: e.message });
-          }
-        }
-        return c.json({ results, stepDebug });
-      } catch (e: any) {
-        return c.json({ error: e.message, stack: e.stack });
-      }
-    },
-  },
   // ======================================================================
   {
     path: "/api/slack/events",
