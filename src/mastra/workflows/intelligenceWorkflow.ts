@@ -223,6 +223,11 @@ const filterContentStep = createStep({
 
       if (!checkResult.exists) {
         newArticles.push(article);
+      } else if (!checkResult.hasSummary) {
+        // Article exists but was never processed (e.g., API key was missing)
+        // Re-queue it for processing with the existing article ID
+        newArticles.push({ ...article, existingArticleId: checkResult.articleId });
+        logger?.info(`🔄 [Step 3] Re-queuing article without summary: ${article.title?.slice(0, 50)}`);
       } else {
         duplicatesSkipped++;
       }
@@ -275,8 +280,8 @@ const processArticlesStep = createStep({
       try {
         logger?.info(`📝 [Step 4] Processing: ${article.title.slice(0, 50)}...`);
 
-        // 1. Save the article first
-        const articleId = await saveArticle({
+        // 1. Save the article (or use existing ID for re-processing)
+        const articleId = article.existingArticleId || await saveArticle({
           sourceId: article.sourceId,
           url: article.url,
           title: article.title,

@@ -14,10 +14,15 @@ export async function getSources() {
 // Check if article already exists
 export async function checkArticleExists(contentHash: string, url: string) {
   const result = await query(
-    "SELECT id FROM articles WHERE content_hash = $1 OR url = $2",
+    `SELECT a.id, EXISTS(SELECT 1 FROM summaries s WHERE s.article_id = a.id) as has_summary
+     FROM articles a WHERE a.content_hash = $1 OR a.url = $2`,
     [contentHash, url]
   );
-  return { exists: result.rows.length > 0, articleId: result.rows[0]?.id };
+  return {
+    exists: result.rows.length > 0,
+    articleId: result.rows[0]?.id,
+    hasSummary: result.rows[0]?.has_summary === true,
+  };
 }
 
 // Save an article
