@@ -54,12 +54,12 @@ const gatherArticlesStep = createStep({
       const personaArticles: any[] = [];
 
       for (const persona of DIGEST_PERSONAS) {
-        const articles = await getTopArticlesForPersona(persona.slug, 1, 7);
+        const articles = await getTopArticlesForPersona(persona.slug, 1, 5);
 
         // If no articles in last 24h, try 2 days
         const finalArticles = articles.length > 0
           ? articles
-          : await getTopArticlesForPersona(persona.slug, 2, 7);
+          : await getTopArticlesForPersona(persona.slug, 2, 5);
 
         // Get viewpoints for each article
         const articlesWithViewpoints = [];

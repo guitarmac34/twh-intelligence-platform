@@ -388,12 +388,15 @@ Respond with JSON only:
           try {
             const summaryResponse = await generateText({
               model: openai("gpt-4o-mini"),
-              prompt: `Analyze this healthcare IT article and provide:
-1. A 2-3 sentence summary of what happened, who is involved, and why it matters
-2. 3-5 key takeaways for healthcare IT sales/marketing teams
-3. Topic tags (choose from: cybersecurity, AI, EHR, interoperability, telehealth, analytics, cloud, regulation, M&A, partnership, funding, leadership)
-4. A relevance score 1-10 (10 = highly relevant for healthcare IT vendors)
-5. A quality rating 1-10 for the article's information density, source credibility, and actionability
+              prompt: `Summarize this healthcare IT article.
+
+Your summary MUST be exactly 2-3 complete sentences that distill the entire article into a single controlling idea. The reader should know exactly what the article is about and whether they need to read the full piece. Do NOT list multiple unrelated points — find the one core story and state it clearly.
+
+Also provide:
+- 3-5 key takeaways for healthcare IT professionals
+- Topic tags (choose from: cybersecurity, AI, EHR, interoperability, telehealth, analytics, cloud, regulation, M&A, partnership, funding, leadership)
+- A relevance score 1-10 (10 = highly relevant for healthcare IT vendors)
+- A quality rating 1-10 for information density, source credibility, and actionability
 
 ARTICLE TITLE: ${article.title}
 
@@ -402,7 +405,7 @@ ${(article.content || "").slice(0, 3000)}
 
 Respond in this exact JSON format:
 {
-  "summary": "2-3 sentence summary here",
+  "summary": "2-3 complete sentences with a single controlling idea.",
   "takeaways": ["takeaway 1", "takeaway 2", "takeaway 3"],
   "tags": ["tag1", "tag2"],
   "relevanceScore": 8,
