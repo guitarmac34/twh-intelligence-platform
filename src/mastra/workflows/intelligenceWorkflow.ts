@@ -17,6 +17,7 @@ import {
 } from "../db/operations";
 import { createOpenAI } from "@ai-sdk/openai";
 import { generateText } from "ai";
+import pLimit from "p-limit";
 
 const openai = createOpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
@@ -120,7 +121,6 @@ const monitorSourcesStep = createStep({
     let sourcesProcessed = 0;
 
     // Rate limit: max 3 concurrent scrapes
-    const pLimit = (await import("p-limit")).default;
     const limit = pLimit(3);
 
     const scrapeSource = async (source: any, index: number) => {
