@@ -21,7 +21,7 @@ import pLimit from "p-limit";
 
 const openai = createOpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.trim(),
 });
 
 // Canonical dictionaries for entity normalization

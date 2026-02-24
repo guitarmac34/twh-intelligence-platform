@@ -7,7 +7,7 @@ import { databaseTool } from "../tools/databaseTool";
 
 const openai = createOpenAI({
   baseURL: process.env.AI_INTEGRATIONS_OPENAI_BASE_URL,
-  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY,
+  apiKey: process.env.AI_INTEGRATIONS_OPENAI_API_KEY?.trim(),
 });
 
 export const researcherAgent = new Agent({
